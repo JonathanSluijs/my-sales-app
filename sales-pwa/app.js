@@ -59,6 +59,9 @@ let session = null;
 let cloudMode = false;
 let realtimeChannel = null;
 let syncing = false;
+let syncPromise = null;
+let syncQueued = false;
+let realtimeReloadTimer = null;
 
 const money = n => new Intl.NumberFormat('en-BE', {style:'currency', currency:'EUR'}).format(Number(n || 0));
 const qtyFmt = n => Number(n || 0).toLocaleString(undefined,{maximumFractionDigits:3});
@@ -218,7 +221,18 @@ async function recordSale(){
       p_items:sale.items
     });
     if(error){ console.error(error); return toast(error.message?.includes('Insufficient stock') ? 'Not enough stock' : 'Cloud sale failed — nothing was recorded'); }
-    cart={}; $('#saleNote').value=''; await loadCloud(); toast('Sale recorded'); return;
+    cart={};
+    $('#saleNote').value='';
+    // Wait for any in-flight refresh, then force one more pass if realtime fired mid-sale.
+    syncQueued=true;
+    await loadCloud();
+    const recorded=state.sales.some(s=>s.id===sale.id);
+    if(!recorded){
+      await loadCloud({queueIfBusy:false});
+    }
+    if(state.sales.some(s=>s.id===sale.id)) toast('Sale recorded');
+    else toast('Sale saved in cloud, but History has not refreshed yet');
+    return;
   }
 
   entries.forEach(i=>{ if(i.stockUsed>0) i.p.stock=cleanFloat(i.p.stock-i.stockUsed); });
@@ -337,27 +351,70 @@ function productRowsForCloud(){
   }));
 }
 
-async function loadCloud(){
-  if(!cloudMode || syncing) return;
-  syncing=true; setSyncBadge('Syncing…','working');
-  try{
-    const [{data:products,error:pe},{data:sales,error:se}] = await Promise.all([
-      supabaseClient.from('products').select('*').order('slot'),
-      supabaseClient.from('sales').select('*').order('sold_at',{ascending:false})
-    ]);
-    if(pe) throw pe; if(se) throw se;
-    if(products?.length){
-      const bySlot=new Map(products.map(p=>[Number(p.slot),p]));
-      state.products=defaultProducts.map((d,idx)=>bySlot.has(idx+1)?mapCloudProduct(bySlot.get(idx+1),idx):normalizeProduct(d,idx));
-      if(products.length<5) await pushProducts();
-    } else {
-      state.products=defaultProducts.map((p,i)=>normalizeProduct(p,i));
-      await pushProducts();
+async function loadCloud({queueIfBusy=true}={}){
+  if(!cloudMode) return;
+  if(syncPromise){
+    if(queueIfBusy) syncQueued=true;
+    return syncPromise;
+  }
+
+  syncPromise=(async()=>{
+    syncing=true;
+    setSyncBadge('Syncing…','working');
+    try{
+      const [{data:products,error:pe},{data:sales,error:se}] = await Promise.all([
+        supabaseClient.from('products').select('*').order('slot'),
+        supabaseClient.rpc('get_my_sales')
+      ]);
+      if(pe) throw pe;
+      if(se) throw se;
+
+      if(products?.length){
+        const bySlot=new Map(products.map(p=>[Number(p.slot),p]));
+        state.products=defaultProducts.map((d,idx)=>bySlot.has(idx+1)?mapCloudProduct(bySlot.get(idx+1),idx):normalizeProduct(d,idx));
+        if(products.length<5) await pushProducts();
+      } else {
+        state.products=defaultProducts.map((p,i)=>normalizeProduct(p,i));
+        await pushProducts();
+      }
+
+      state.sales=(sales||[]).map(s=>({
+        id:s.id,
+        date:s.sold_at,
+        items:Array.isArray(s.items)?s.items:[],
+        total:Number(s.total),
+        note:s.note||''
+      }));
+      saveLocal();
+      renderAll();
+      setSyncBadge(`Synced · ${state.sales.length}`,'ok');
+    } catch(e){
+      console.error('Cloud sync failed:',e);
+      setSyncBadge('Sync issue','error');
+      toast(`Cloud sync failed${e?.message?': '+e.message:''}`);
+    } finally {
+      syncing=false;
     }
-    state.sales=(sales||[]).map(s=>({id:s.id,date:s.sold_at,items:s.items,total:Number(s.total),note:s.note||''}));
-    saveLocal(); renderAll(); setSyncBadge('Synced','ok');
-  } catch(e){ console.error(e); setSyncBadge('Sync issue','error'); toast('Cloud sync failed'); }
-  finally{ syncing=false; }
+  })();
+
+  try {
+    await syncPromise;
+  } finally {
+    syncPromise=null;
+    if(syncQueued){
+      syncQueued=false;
+      // Run once more to pick up any database changes that arrived mid-sync.
+      return loadCloud({queueIfBusy:false});
+    }
+  }
+}
+
+function scheduleRealtimeReload(){
+  if(realtimeReloadTimer) clearTimeout(realtimeReloadTimer);
+  realtimeReloadTimer=setTimeout(()=>{
+    realtimeReloadTimer=null;
+    loadCloud();
+  },180);
 }
 
 async function pushProducts(){
@@ -380,8 +437,8 @@ function setupRealtime(){
   if(!cloudMode) return;
   if(realtimeChannel) supabaseClient.removeChannel(realtimeChannel);
   realtimeChannel=supabaseClient.channel(`sales-${session.user.id}`)
-    .on('postgres_changes',{event:'*',schema:'public',table:'sales',filter:`user_id=eq.${session.user.id}`},()=>loadCloud())
-    .on('postgres_changes',{event:'*',schema:'public',table:'products',filter:`user_id=eq.${session.user.id}`},()=>loadCloud())
+    .on('postgres_changes',{event:'*',schema:'public',table:'sales',filter:`user_id=eq.${session.user.id}`},scheduleRealtimeReload)
+    .on('postgres_changes',{event:'*',schema:'public',table:'products',filter:`user_id=eq.${session.user.id}`},scheduleRealtimeReload)
     .subscribe();
 }
 
