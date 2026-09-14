@@ -1,4 +1,4 @@
-const LOCAL_KEY = 'saleslog_v3';
+const LOCAL_KEY = 'saleslog_v3_3';
 const defaultProducts = [
   {
     id: 1,
@@ -90,23 +90,33 @@ function linePrice(p,q){
   return q*p.price;
 }
 
+function paidUnitsFor(p,q){
+  if(p.dealType==='free' && p.dealQty>0 && p.freeQty>0){
+    const group=p.dealQty+p.freeQty;
+    return Math.floor(q/group)*p.dealQty + Math.min(q%group,p.dealQty);
+  }
+  return q;
+}
+
 const largeVariants = {
-  standard: p => ({label:`Standard ${qtyFmt(p.standardAmount)}`, short:`${qtyFmt(p.standardAmount)} portion`, price:p.price, stockPer: p.standardAmount, deliveredPer:1}),
-  full: p => ({label:'Full 1.0', short:'Full product', price:p.fullPrice, stockPer:1, deliveredPer:1}),
-  '3plus1': p => ({label:'3 + 1 deal', short:'3+1 deal', price:p.price*3, stockPer:p.standardAmount*4, deliveredPer:4}),
-  '2plus1': p => ({label:'2 + 1 deal', short:'2+1 deal', price:p.price*2, stockPer:p.standardAmount*3, deliveredPer:3})
+  standard: p => ({label:`Standard ${qtyFmt(p.standardAmount)}`, short:`${qtyFmt(p.standardAmount)} portion`, price:p.price, stockPer: p.standardAmount, deliveredPer:1, paidPortions:1}),
+  full: p => ({label:'Full 1.0', short:'Full product', price:p.fullPrice, stockPer:1, deliveredPer:1, paidPortions:1}),
+  '3plus1': p => ({label:'3 + 1 deal', short:'3+1 deal', price:p.price*3, stockPer:p.standardAmount*4, deliveredPer:4, paidPortions:3}),
+  '2plus1': p => ({label:'2 + 1 deal', short:'2+1 deal', price:p.price*2, stockPer:p.standardAmount*3, deliveredPer:3, paidPortions:2}),
+  free: p => ({label:`Free ${qtyFmt(p.standardAmount)}`, short:'Free', price:0, stockPer:p.standardAmount, deliveredPer:1, paidPortions:0})
 };
 
 function cartKey(productId, variant='unit'){ return `${productId}:${variant}`; }
 function parseCartKey(key){ const [id,variant]=key.split(':'); return {id:Number(id),variant}; }
 
 function cartStockForProduct(productId){
-  return Object.entries(cart).reduce((sum,[key,q])=>{
+  return Object.entries(cart).reduce((sum,[key,value])=>{
     const {id,variant}=parseCartKey(key);
     if(id!==productId) return sum;
     const p=state.products.find(x=>x.id===id);
     if(!p) return sum;
-    if(p.productType==='fractional_large') return sum + largeVariants[variant](p).stockPer*q;
+    if(value && typeof value==='object' && value.manual) return sum + Number(value.stockUsed||0);
+    if(p.productType==='fractional_large' && largeVariants[variant]) return sum + largeVariants[variant](p).stockPer*Number(value||0);
     return sum;
   },0);
 }
@@ -114,14 +124,24 @@ function cartStockForProduct(productId){
 function renderLargeProduct(p){
   const remaining = Math.max(0,p.stock-cartStockForProduct(p.id));
   const buttons = [
-    ['standard', `${qtyFmt(p.standardAmount)} for ${money(p.price)}`, `${qtyFmt(p.standardAmount)} stock`],
-    ['full', `Full for ${money(p.fullPrice)}`, '1.0 stock'],
-    ['3plus1', `3 + 1 · ${money(p.price*3)}`, `${qtyFmt(p.standardAmount*4)} stock used`],
-    ['2plus1', `2 + 1 · ${money(p.price*2)}`, `${qtyFmt(p.standardAmount*3)} stock used · rare`]
+    ['standard', `${qtyFmt(p.standardAmount)} for ${money(p.price)}`, `${qtyFmt(p.standardAmount)} stock · driver +€10`],
+    ['full', `Full for ${money(p.fullPrice)}`, '1.0 stock · driver +€10'],
+    ['3plus1', `3 + 1 · ${money(p.price*3)}`, `${qtyFmt(p.standardAmount*4)} stock · driver +€30`],
+    ['2plus1', `2 + 1 · ${money(p.price*2)}`, `${qtyFmt(p.standardAmount*3)} stock · driver +€20 · rare`],
+    ['free', `Free ${qtyFmt(p.standardAmount)}`, `${qtyFmt(p.standardAmount)} stock · no commission`]
   ];
   return `<div class="product large-product-card">
     <div class="product-top"><div><b>${esc(p.name)}</b><small>Fractional inventory</small></div><span class="stock-pill">${qtyFmt(remaining)} in stock</span></div>
-    <div class="variant-grid">${buttons.map(([variant,title,sub])=>`<button class="variant-btn" onclick="addLargeVariant(${p.id},'${variant}')"><strong>${title}</strong><small>${sub}</small></button>`).join('')}</div>
+    <div class="variant-grid">${buttons.map(([variant,title,sub])=>`<button class="variant-btn ${variant==='free'?'free-variant':''}" onclick="addLargeVariant(${p.id},'${variant}')"><strong>${title}</strong><small>${sub}</small></button>`).join('')}</div>
+    <details class="misc-sale"><summary>Misc large sale</summary>
+      <div class="misc-grid">
+        <label>Sale price €<input id="miscLargePrice" type="number" min="0" step=".01" placeholder="50"></label>
+        <label>Stock used<input id="miscLargeStock" type="number" min="0.001" step=".1" value="${p.standardAmount}"></label>
+        <label>Paid portions for driver<input id="miscLargePaid" type="number" min="0" step="1" value="1"></label>
+      </div>
+      <button class="ghost wide" type="button" onclick="addMiscLarge(${p.id})">Add misc sale</button>
+      <small class="muted">Driver commission = €10 × paid portions. Use 0 for a free/misc giveaway.</small>
+    </details>
   </div>`;
 }
 
@@ -143,8 +163,23 @@ window.addLargeVariant = (id,variant) => {
   cart[key]=(cart[key]||0)+1;
   renderProducts();
 };
+window.addMiscLarge = id => {
+  const p=state.products.find(x=>x.id===id);
+  if(!p) return;
+  const price=Number($('#miscLargePrice')?.value);
+  const stockUsed=Number($('#miscLargeStock')?.value);
+  const paidPortions=Math.max(0,Math.floor(Number($('#miscLargePaid')?.value)||0));
+  if(!Number.isFinite(price) || price<0) return toast('Enter a valid misc sale price');
+  if(!Number.isFinite(stockUsed) || stockUsed<=0) return toast('Enter stock used');
+  if(cartStockForProduct(id)+stockUsed > p.stock+0.0001) return toast('Not enough stock');
+  const key=`${id}:misc:${Date.now()}`;
+  cart[key]={qty:1,manual:true,price,stockUsed,paidPortions,label:'Misc large sale'};
+  renderProducts();
+};
+
 window.addProduct = id => { const key=cartKey(id,'unit'); cart[key]=(cart[key]||0)+1; renderCart(); };
 window.changeQty = (key,d) => {
+  if(cart[key] && typeof cart[key]==='object'){ if(d<0) delete cart[key]; renderProducts(); return; }
   const {id,variant}=parseCartKey(key);
   const p=state.products.find(x=>x.id===id);
   if(d>0 && p?.productType==='fractional_large'){
@@ -156,11 +191,20 @@ window.changeQty = (key,d) => {
   renderProducts();
 };
 
+function isOwnCustomer(){ return !!$('#ownCustomer')?.checked; }
+function currentCommissionRate(){ return isOwnCustomer() ? 15 : 10; }
+
 function cartEntries(){
-  return Object.entries(cart).map(([key,q])=>{
-    const {id,variant}=parseCartKey(key);
+  return Object.entries(cart).map(([key,value])=>{
+    const parts=key.split(':');
+    const id=Number(parts[0]);
+    const variant=parts[1] || 'unit';
     const p=state.products.find(x=>x.id===id);
-    if(!p || !q) return null;
+    if(!p || !value) return null;
+    if(value && typeof value==='object' && value.manual){
+      return {key,p,variant:'misc',qty:1,label:value.label||'Misc large sale',total:Number(value.price),unitPrice:Number(value.price),stockUsed:cleanFloat(value.stockUsed),deliveredQty:1,paidPortions:Number(value.paidPortions||0),commission:Number(value.paidPortions||0)*currentCommissionRate(),commissionRate:currentCommissionRate(),manual:true};
+    }
+    const q=Number(value);
     if(p.productType==='fractional_large'){
       const v=largeVariants[variant](p);
       return {
@@ -168,10 +212,13 @@ function cartEntries(){
         total:v.price*q,
         unitPrice:v.price,
         stockUsed:cleanFloat(v.stockPer*q),
-        deliveredQty:v.deliveredPer*q
+        deliveredQty:v.deliveredPer*q,
+        paidPortions:(v.paidPortions ?? v.deliveredPer)*q,
+        commission:(v.paidPortions ?? v.deliveredPer)*q*currentCommissionRate(),commissionRate:currentCommissionRate()
       };
     }
-    return {key,p,variant:'unit',qty:q,label:p.name,total:linePrice(p,q),unitPrice:p.price,stockUsed:0,deliveredQty:q};
+    const paid=paidUnitsFor(p,q);
+    return {key,p,variant:'unit',qty:q,label:p.name,total:linePrice(p,q),unitPrice:p.price,stockUsed:0,deliveredQty:q,paidPortions:paid,commission:paid*currentCommissionRate(),commissionRate:currentCommissionRate()};
   }).filter(Boolean);
 }
 
@@ -180,9 +227,10 @@ function renderCart(){
   const total=items.reduce((s,i)=>s+i.total,0);
   $('#cart').innerHTML = items.length ? items.map(i=>{
     const meta = i.p.productType==='fractional_large'
-      ? `${i.qty}× ${esc(i.label)} · ${money(i.total)} · uses ${qtyFmt(i.stockUsed)} stock`
-      : `${i.qty} unit${i.qty>1?'s':''} · ${money(i.total)}`;
-    return `<div class="cart-item"><div><b>${esc(i.p.name)}${i.p.productType==='fractional_large'?` · ${esc(i.label)}`:''}</b><div class="history-meta">${meta}</div></div><div class="qty"><button onclick="changeQty('${i.key}',-1)">−</button><b>${i.qty}</b><button onclick="changeQty('${i.key}',1)">+</button></div><strong>${money(i.total)}</strong></div>`;
+      ? `${i.qty}× ${esc(i.label)} · ${money(i.total)} · uses ${qtyFmt(i.stockUsed)} stock · driver ${money(i.commission)}`
+      : `${i.qty} unit${i.qty>1?'s':''} · ${money(i.total)} · driver ${money(i.commission)}`;
+    const controls=i.manual?`<div class="qty"><button onclick="changeQty('${i.key}',-1)">Remove</button></div>`:`<div class="qty"><button onclick="changeQty('${i.key}',-1)">−</button><b>${i.qty}</b><button onclick="changeQty('${i.key}',1)">+</button></div>`;
+    return `<div class="cart-item"><div><b>${esc(i.p.name)}${i.p.productType==='fractional_large'?` · ${esc(i.label)}`:''}</b><div class="history-meta">${meta}</div></div>${controls}<strong>${money(i.total)}</strong></div>`;
   }).join('') : `<p class="muted">Tap a product option to add it.</p>`;
   $('#cartTotal').textContent=money(total);
 }
@@ -202,14 +250,18 @@ async function recordSale(){
     deliveredQty:i.deliveredQty,
     unitPrice:i.unitPrice,
     total:i.total,
-    stockUsed:i.stockUsed
+    stockUsed:i.stockUsed,
+    paidPortions:i.paidPortions ?? i.qty,
+    commission:i.commission ?? 0,
+    commissionRate:i.commissionRate ?? currentCommissionRate()
   }));
   const sale={
     id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
     date: new Date().toISOString(),
     items,
     total: items.reduce((a,b)=>a+b.total,0),
-    note: $('#saleNote').value.trim()
+    note: $('#saleNote').value.trim(),
+    customerSource: isOwnCustomer() ? 'driver_own' : 'company'
   };
 
   if(cloudMode){
@@ -223,6 +275,7 @@ async function recordSale(){
     if(error){ console.error(error); return toast(error.message?.includes('Insufficient stock') ? 'Not enough stock' : 'Cloud sale failed — nothing was recorded'); }
     cart={};
     $('#saleNote').value='';
+    if($('#ownCustomer')) $('#ownCustomer').checked=false;
     // Wait for any in-flight refresh, then force one more pass if realtime fired mid-sale.
     syncQueued=true;
     await loadCloud();
@@ -236,34 +289,30 @@ async function recordSale(){
   }
 
   entries.forEach(i=>{ if(i.stockUsed>0) i.p.stock=cleanFloat(i.p.stock-i.stockUsed); });
-  state.sales.unshift(sale); cart={}; $('#saleNote').value=''; saveLocal(); renderAll(); toast('Sale recorded');
+  state.sales.unshift(sale); cart={}; $('#saleNote').value='';
+    if($('#ownCustomer')) $('#ownCustomer').checked=false; saveLocal(); renderAll(); toast('Sale recorded');
 }
 
+function itemCommission(i){
+  if(i.commission!==undefined && i.commission!==null) return Number(i.commission||0);
+  if(i.paidPortions!==undefined && i.paidPortions!==null) return Number(i.paidPortions||0)*10;
+  const q=Number(i.qty||1);
+  if(i.variant==='3plus1') return q*30;
+  if(i.variant==='2plus1') return q*20;
+  if(i.variant==='free') return 0;
+  if(i.variant==='standard' || i.variant==='full') return q*10;
+  return q*10;
+}
+function saleCommission(s){ return (s.items||[]).reduce((a,i)=>a+itemCommission(i),0); }
 function itemHistoryText(i){
-  if(i.variantLabel) return `${i.qty}× ${esc(i.name)} · ${esc(i.variantLabel)}${Number(i.stockUsed)>0?` · −${qtyFmt(i.stockUsed)} stock`:''}`;
-  return `${i.qty}× ${esc(i.name)}`;
+  const commission=itemCommission(i);
+  if(i.variantLabel) return `${i.qty}× ${esc(i.name)} · ${esc(i.variantLabel)}${Number(i.stockUsed)>0?` · −${qtyFmt(i.stockUsed)} stock`:''} · driver ${money(commission)}`;
+  return `${i.qty}× ${esc(i.name)} · driver ${money(commission)}`;
 }
 
 function renderHistory(){
-  $('#historyList').innerHTML = state.sales.length ? state.sales.map(s=>`<div class="history-item"><div class="history-head"><b>${money(s.total)}</b><span>${new Date(s.date).toLocaleString()}</span></div><div>${s.items.map(itemHistoryText).join('<br>')}</div>${s.note?`<div class="history-meta">${esc(s.note)}</div>`:''}<button class="ghost delete-sale" onclick="deleteSale('${s.id}')">Delete & restore stock</button></div>`).join('') : `<p class="muted">No sales yet.</p>`;
+  $('#historyList').innerHTML = state.sales.length ? state.sales.map(s=>`<div class="history-item"><div class="history-head"><b>${money(s.total)}</b><span>${new Date(s.date).toLocaleString()}</span></div><div>${s.items.map(itemHistoryText).join('<br>')}</div><div class="commission-line">Driver earned ${money(saleCommission(s))}${s.customerSource==='driver_own'?' · Own customer (€15 each)':' · Regular (€10 each)'}</div>${s.note?`<div class="history-meta">${esc(s.note)}</div>`:''}</div>`).join('') : `<p class="muted">No sales yet.</p>`;
 }
-
-window.deleteSale = async id => {
-  if(!confirm('Delete this sale and restore any inventory it used?')) return;
-  if(cloudMode){
-    const {error}=await supabaseClient.rpc('delete_sale_restore_stock',{p_sale_id:id});
-    if(error){ console.error(error); return toast('Could not delete sale'); }
-    await loadCloud(); toast('Sale deleted; stock restored'); return;
-  }
-  const sale=state.sales.find(s=>s.id===id);
-  if(sale){
-    sale.items.forEach(i=>{
-      const p=state.products.find(x=>Number(x.id)===Number(i.id));
-      if(p && Number(i.stockUsed)>0) p.stock=cleanFloat(p.stock+Number(i.stockUsed));
-    });
-  }
-  state.sales=state.sales.filter(s=>s.id!==id); saveLocal(); renderAll(); toast('Sale deleted; stock restored');
-};
 
 function renderStats(){
   const now=new Date();
@@ -274,11 +323,13 @@ function renderStats(){
   $('#saleCount').textContent=state.sales.length;
   const delivered=state.sales.reduce((a,s)=>a+s.items.reduce((x,i)=>x+Number(i.deliveredQty ?? i.qty ?? 0),0),0);
   $('#unitCount').textContent=qtyFmt(delivered);
+  const driverTotal=state.sales.reduce((a,s)=>a+saleCommission(s),0);
+  if($('#driverEarnings')) $('#driverEarnings').textContent=money(driverTotal);
   $('#productStats').innerHTML=state.products.map(p=>{
-    let q=0,r=0,stockUsed=0;
-    state.sales.forEach(s=>s.items.filter(i=>Number(i.id)===Number(p.id)).forEach(i=>{q+=Number(i.deliveredQty ?? i.qty ?? 0);r+=Number(i.total||0);stockUsed+=Number(i.stockUsed||0);}));
+    let q=0,r=0,stockUsed=0,commission=0;
+    state.sales.forEach(s=>s.items.filter(i=>Number(i.id)===Number(p.id)).forEach(i=>{q+=Number(i.deliveredQty ?? i.qty ?? 0);r+=Number(i.total||0);stockUsed+=Number(i.stockUsed||0);commission+=itemCommission(i);}));
     const extra=p.productType==='fractional_large'?` · ${qtyFmt(stockUsed)} stock used · ${qtyFmt(p.stock)} left`:'';
-    return `<div class="row stat-row"><span>${esc(p.name)}<small class="muted stat-small">${qtyFmt(q)} delivered${extra}</small></span><b>${money(r)}</b></div>`;
+    return `<div class="row stat-row"><span>${esc(p.name)}<small class="muted stat-small">${qtyFmt(q)} delivered${extra} · driver ${money(commission)}</small></span><b>${money(r)}</b></div>`;
   }).join('');
 }
 
@@ -288,7 +339,7 @@ function renderSettings(){
       return `<div class="setting-product special-setting" data-i="${idx}"><div class="setting-title"><b>Product 1 · Fractional large product</b><span class="stock-pill">${qtyFmt(p.stock)} stock</span></div>
         <div class="setting-grid"><label>Name<input data-k="name" value="${attr(p.name)}"></label><label>Current stock (whole products)<input data-k="stock" type="number" min="0" step=".1" value="${p.stock}"></label></div>
         <div class="setting-grid"><label>Standard amount sold<input data-k="standardAmount" type="number" min="0.01" step=".1" value="${p.standardAmount}"></label><label>Standard price<input data-k="price" type="number" min="0" step=".01" value="${p.price}"></label><label>Full-product price<input data-k="fullPrice" type="number" min="0" step=".01" value="${p.fullPrice}"></label></div>
-        <div class="deal-summary"><b>Built-in deal buttons</b><span>3 + 1 = ${money(p.price*3)} · stock ${qtyFmt(p.standardAmount*4)}</span><span>2 + 1 = ${money(p.price*2)} · stock ${qtyFmt(p.standardAmount*3)}</span></div>
+        <div class="deal-summary"><b>Built-in deal buttons</b><span>3 + 1 = ${money(p.price*3)} · stock ${qtyFmt(p.standardAmount*4)}</span><span>2 + 1 = ${money(p.price*2)} · stock ${qtyFmt(p.standardAmount*3)}</span><span>Free = ${qtyFmt(p.standardAmount)} stock · €0 driver commission</span><span>Misc = manual price / stock / paid portions</span></div>
       </div>`;
     }
     return `<div class="setting-product" data-i="${idx}"><b>Product ${idx+1}</b><div class="setting-grid"><label>Name<input data-k="name" value="${attr(p.name)}"></label><label>Unit price<input data-k="price" type="number" min="0" step=".01" value="${p.price}"></label></div><label>Deal<select data-k="dealType"><option value="none" ${p.dealType==='none'?'selected':''}>No deal</option><option value="bundle" ${p.dealType==='bundle'?'selected':''}>Fixed bundle price</option><option value="free" ${p.dealType==='free'?'selected':''}>Buy X get Y free</option></select></label><div class="setting-grid"><label>Deal / buy quantity<input data-k="dealQty" type="number" min="0" value="${p.dealQty||0}"></label><label>Bundle price<input data-k="dealPrice" type="number" min="0" step=".01" value="${p.dealPrice||0}"></label><label>Free quantity<input data-k="freeQty" type="number" min="0" value="${p.freeQty||0}"></label></div></div>`;
@@ -313,7 +364,7 @@ async function saveSettings(){
 }
 
 function exportCsv(){
-  const rows=[['Date','Total','Items','Stock used','Note'],...state.sales.map(s=>[new Date(s.date).toLocaleString(),s.total,s.items.map(i=>`${i.qty}x ${i.name}${i.variantLabel?` (${i.variantLabel})`:''}`).join('; '),s.items.reduce((a,i)=>a+Number(i.stockUsed||0),0),s.note||''])];
+  const rows=[['Date','Total','Driver commission','Items','Stock used','Note'],...state.sales.map(s=>[new Date(s.date).toLocaleString(),s.total,saleCommission(s),s.items.map(i=>`${i.qty}x ${i.name}${i.variantLabel?` (${i.variantLabel})`:''}`).join('; '),s.items.reduce((a,i)=>a+Number(i.stockUsed||0),0),s.note||''])];
   download('sales.csv',rows.map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(',')).join('\n'),'text/csv');
 }
 function download(name,text,type){ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([text],{type})); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),500); }
@@ -500,7 +551,6 @@ function wireUi(){
   $('#exportCsv').onclick=exportCsv;
   $('#exportJson').onclick=()=>download('sales-backup.json',JSON.stringify(state,null,2),'application/json');
   $('#importJson').onchange=async e=>{try{const x=JSON.parse(await e.target.files[0].text());if(!x.products||!x.sales)throw 0;state={products:x.products.map((p,i)=>normalizeProduct(p,i)),sales:x.sales};saveLocal();renderAll();if(cloudMode){await pushProducts(); await pushLocalSalesIfCloudEmpty(); await loadCloud();}toast('Backup imported')}catch{toast('Invalid backup')}};
-  $('#clearData').onclick=async()=>{if(!confirm('Delete all recorded sales? This does not automatically rebuild stock.'))return;state.sales=[];saveLocal();renderAll();if(cloudMode)await supabaseClient.from('sales').delete().eq('user_id',session.user.id);toast('Sales deleted')};
   $('#signInBtn').onclick=signIn; $('#signUpBtn').onclick=signUp; $('#localModeBtn').onclick=enterLocalMode; $('#signOutBtn').onclick=signOut; $('#syncNow').onclick=loadCloud;
   let deferred;
   window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferred=e;const b=$('#installBtn');b.hidden=false;b.onclick=async()=>{await deferred.prompt();deferred=null;b.hidden=true;}});
