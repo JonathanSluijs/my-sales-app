@@ -1,4 +1,4 @@
-const C='sales-log-v2';
+const C='sales-log-v3';
 const FILES=['./','index.html','style.css','app.js','config.js','manifest.json','icon.svg'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(C).then(c=>c.addAll(FILES))));
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==C).map(k=>caches.delete(k))))));
