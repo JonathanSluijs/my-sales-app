@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#0f172a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <link rel="manifest" href="manifest.json?v=5.1">
+  <link rel="manifest" href="manifest.json?v=5.2">
   <link rel="icon" href="icon.svg">
-  <link rel="stylesheet" href="style.css?v=5.1.1">
+  <link rel="stylesheet" href="style.css?v=5.2.1">
   <title>Sales Log</title>
 </head>
 <body>
@@ -81,6 +81,8 @@
           <div class="metric"><span>Sales</span><strong id="saleCount">0</strong></div>
           <div class="metric"><span>Delivered portions</span><strong id="unitCount">0</strong></div>
           <div class="metric driver-metric"><span>Driver earnings</span><strong id="driverEarnings">€0.00</strong></div>
+          <div class="metric driver-metric"><span>Paid out</span><strong id="driverPaidOut">€0.00</strong></div>
+          <div class="metric driver-metric"><span>Awaiting payout</span><strong id="driverAwaitingPayout">€0.00</strong></div>
         </div>
         <div class="card"><h2>By product</h2><div id="productStats"></div></div>
       </section>
@@ -178,7 +180,7 @@
 
   <div id="toast"></div>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="config.js?v=5.1.1"></script>
-  <script src="app.js?v=5.1.1"></script>
+  <script src="config.js?v=5.2.1"></script>
+  <script src="app.js?v=5.2.1"></script>
 </body>
 </html>

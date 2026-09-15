@@ -1,4 +1,4 @@
-const LOCAL_KEY = 'saleslog_v5_1';
+const LOCAL_KEY = 'saleslog_v5_2';
 const defaultProducts = [
   {
     id: 1, name: 'Large product', price: 50, productType: 'fractional_large',
@@ -458,7 +458,7 @@ function renderHistory(){
       <div class="commission-line">Driver earned ${money(totalOwed)} · ${sale.customerSource==='driver_own'?'Driver own customer':'Regular customer'}</div>
       ${requested>0?`<div class="history-meta"><b>Extra pay request:</b> ${money(requested)} · ${esc(supplementReason(sale))} · <b>${statusText}</b></div>`:''}
       ${sale.note?`<div class="history-meta">${esc(sale.note)}</div>`:''}
-      ${sale.payoutId?`<div class="history-meta"><b>Settlement:</b> cash collected / commission settled ${sale.payoutAt?`· ${new Date(sale.payoutAt).toLocaleString()}`:''}</div>`:''}
+      ${sale.payoutId?`<div class="history-meta payout-confirmed"><b>✓ PAID OUT</b> · Your share for this delivery has been settled ${sale.payoutAt?`on ${new Date(sale.payoutAt).toLocaleString()}`:''}</div>`:`<div class="history-meta payout-open"><b>Not paid out yet</b></div>`}
     </div>`;
   }).join('') : `<p class="muted">No sales yet.</p>`;
 }
