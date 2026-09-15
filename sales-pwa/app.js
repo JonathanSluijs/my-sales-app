@@ -1,4 +1,4 @@
-const LOCAL_KEY = 'saleslog_v3_6';
+const LOCAL_KEY = 'saleslog_v4_0';
 const defaultProducts = [
   {
     id: 1, name: 'Large product', price: 50, productType: 'fractional_large',
@@ -472,7 +472,9 @@ async function loadCloud({queueIfBusy=true}={}){
         items:Array.isArray(s.items)?s.items:[],
         total:Number(s.total),
         note:s.note||'',
-        customerSource:(Array.isArray(s.items) && s.items[0]?.customerSource) || 'company'
+        customerSource:(Array.isArray(s.items) && s.items[0]?.customerSource) || 'company',
+        supplementAmount:Number((Array.isArray(s.items) && s.items[0]?.supplementAmount)||0),
+        supplementNote:(Array.isArray(s.items) && s.items[0]?.supplementNote)||''
       }));
       saveLocal();
       renderAll();
@@ -580,13 +582,16 @@ function initSupabase(){
   }
 }
 
-function renderAll(){ renderProducts(); renderHistory(); renderStats(); renderSettings(); }
+function renderAll(){ applyRoleUI(); renderProducts(); renderHistory(); renderStats(); renderSettings(); renderAdmin(); }
 
 function wireUi(){
   document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button,.tab').forEach(x=>x.classList.remove('active'));b.classList.add('active');$('#'+b.dataset.tab).classList.add('active');});
   $('#recordSale').onclick=recordSale;
   $('#saveSettings').onclick=saveSettings;
   $('#exportCsv').onclick=exportCsv;
+  if($('#adminSaveStock')) $('#adminSaveStock').onclick=adminSaveStock;
+  if($('#adminExportCsv')) $('#adminExportCsv').onclick=exportCsv;
+  if($('#adminExportJson')) $('#adminExportJson').onclick=()=>download('sales-backup.json',JSON.stringify(state,null,2),'application/json');
   $('#exportJson').onclick=()=>download('sales-backup.json',JSON.stringify(state,null,2),'application/json');
   $('#importJson').onchange=async e=>{try{const x=JSON.parse(await e.target.files[0].text());if(!x.products||!x.sales)throw 0;state={products:x.products.map((p,i)=>normalizeProduct(p,i)),sales:x.sales};saveLocal();renderAll();if(cloudMode){await pushProducts(); await pushLocalSalesIfCloudEmpty(); await loadCloud();}toast('Backup imported')}catch{toast('Invalid backup')}};
   $('#signInBtn').onclick=signIn; $('#signUpBtn').onclick=signUp; $('#localModeBtn').onclick=enterLocalMode; $('#signOutBtn').onclick=signOut; $('#syncNow').onclick=loadCloud;
@@ -597,7 +602,7 @@ function wireUi(){
 
 async function boot(){
   initSupabase(); wireUi();
-  if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js?v=3.7', {updateViaCache:'none'});
+  if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js?v=4.0', {updateViaCache:'none'});
   if(supabaseClient){
     const {data}=await supabaseClient.auth.getSession();
     if(data.session){ session=data.session; await enterCloudMode(); return; }

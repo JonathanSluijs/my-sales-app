@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#0f172a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <link rel="manifest" href="manifest.json?v=3.7">
+  <link rel="manifest" href="manifest.json?v=4.0">
   <link rel="icon" href="icon.svg">
-  <link rel="stylesheet" href="style.css?v=3.7">
+  <link rel="stylesheet" href="style.css?v=4.0">
   <title>Sales Log</title>
 </head>
 <body>
@@ -17,6 +17,7 @@
       <div class="brand-mark">SL</div>
       <h1>Sales Log</h1>
       <p class="muted" id="authSub">Sign in to sync sales across all your phones.</p>
+      <div class="role-hint">Accounts can be configured as <b>Driver</b> or <b>Admin</b>.</div>
       <label>Email<input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com"></label>
       <label>Password<input id="authPassword" type="password" autocomplete="current-password" placeholder="At least 6 characters"></label>
       <button id="signInBtn" class="primary wide">Sign in</button>
@@ -33,7 +34,7 @@
         <p id="today"></p>
       </div>
       <div class="header-actions">
-        <span id="syncBadge" class="sync-badge">Local</span>
+        <span id="roleBadge" class="role-badge">Driver</span><span id="syncBadge" class="sync-badge">Local</span>
         <button class="ghost small-btn" id="installBtn" hidden>Install</button>
       </div>
     </header>
@@ -42,7 +43,7 @@
       <button data-tab="sale" class="active">New sale</button>
       <button data-tab="history">History</button>
       <button data-tab="stats">Stats</button>
-      <button data-tab="settings">Settings</button>
+      <button data-tab="settings">Settings</button><button data-tab="admin" id="adminNav" hidden>Admin</button>
     </nav>
 
     <main>
@@ -53,7 +54,15 @@
           <div id="cart" class="cart"></div>
           <div class="row total"><span>Total</span><strong id="cartTotal">€0.00</strong></div>
           <label class="customer-toggle"><input id="ownCustomer" type="checkbox"> <span><b>Driver's own customer</b><small>Use the higher own-customer commission rate for this sale.</small></span></label>
-          <label>Note<input id="saleNote" placeholder="Optional"></label>
+          <div class="supplement-box">
+            <h3>Supplement / extra pay</h3>
+            <p class="muted">Use this only when the driver must receive extra money for a miscellaneous scenario.</p>
+            <div class="setting-grid">
+              <label>Extra amount (€)<input id="supplementAmount" type="number" min="0" step="0.01" placeholder="0.00"></label>
+              <label>Reason <span class="required">required if amount is entered</span><input id="supplementNote" placeholder="Why is this extra payment needed?"></label>
+            </div>
+          </div>
+          <label>Sale note<input id="saleNote" placeholder="Optional"></label>
           <button id="recordSale" class="primary wide">Record sale</button>
         </div>
       </section>
@@ -99,12 +108,40 @@
           </div>
         </div>
       </section>
+
+      <section id="admin" class="tab">
+        <div class="card">
+          <h2>Admin dashboard</h2>
+          <p class="muted">Administrative controls. Driver accounts do not see this tab.</p>
+          <div class="stats-grid">
+            <div class="metric"><span>Revenue</span><strong id="adminRevenue">€0.00</strong></div>
+            <div class="metric"><span>Driver owed</span><strong id="adminDriverOwed">€0.00</strong></div>
+            <div class="metric"><span>Supplements</span><strong id="adminSupplements">€0.00</strong></div>
+            <div class="metric"><span>Sales</span><strong id="adminSalesCount">0</strong></div>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Driver stock management</h2>
+          <p class="muted">Set the physical quantity currently assigned to the driver. Use the reason field so adjustments have an audit note.</p>
+          <div id="adminStock"></div>
+          <label>Stock adjustment reason<input id="stockReason" placeholder="e.g. Restocked driver with 20 Ketnet"></label>
+          <button id="adminSaveStock" class="primary wide">Save driver stock</button>
+        </div>
+        <div class="card">
+          <h2>Administration</h2>
+          <div class="admin-actions">
+            <button id="adminExportCsv" class="ghost">Export sales CSV</button>
+            <button id="adminExportJson" class="ghost">Export full backup</button>
+          </div>
+          <p class="tiny muted">Admin can review revenue, driver commission, supplements, stock on hand and export records. Sales remain append-only in this version to protect the audit trail.</p>
+        </div>
+      </section>
     </main>
   </div>
 
   <div id="toast"></div>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="config.js?v=3.3"></script>
-  <script src="app.js?v=3.7"></script>
+  <script src="config.js?v=4.0"></script>
+  <script src="app.js?v=4.0"></script>
 </body>
 </html>
