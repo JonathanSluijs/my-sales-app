@@ -1,31 +1,30 @@
-const LOCAL_KEY = 'saleslog_v3_3';
+const LOCAL_KEY = 'saleslog_v3_5';
 const defaultProducts = [
   {
-    id: 1,
-    name: 'Large product',
-    price: 50,
-    productType: 'fractional_large',
-    stock: 50,
-    standardAmount: 0.7,
-    fullPrice: 60,
-    dealType: 'none',
-    dealQty: 0,
-    dealPrice: 0,
-    freeQty: 0
+    id: 1, name: 'Large product', price: 50, productType: 'fractional_large',
+    stock: 50, standardAmount: 0.7, fullPrice: 60,
+    dealType: 'none', dealQty: 0, dealPrice: 0, freeQty: 0
   },
-  ...Array.from({length:4}, (_,i) => ({
-    id: i + 2,
-    name: `Product ${i + 2}`,
-    price: 10,
-    productType: 'standard',
-    stock: 0,
-    standardAmount: 1,
-    fullPrice: 0,
-    dealType: 'none',
-    dealQty: 0,
-    dealPrice: 0,
-    freeQty: 0
-  }))
+  {
+    id: 2, name: 'Ketnet', price: 15, productType: 'standard',
+    stock: 0, standardAmount: 1, fullPrice: 0,
+    dealType: 'none', dealQty: 0, dealPrice: 0, freeQty: 0
+  },
+  {
+    id: 3, name: '3Motion', price: 15, productType: 'standard',
+    stock: 0, standardAmount: 1, fullPrice: 0,
+    dealType: 'none', dealQty: 0, dealPrice: 0, freeQty: 0
+  },
+  {
+    id: 4, name: 'NEP', price: 15, productType: 'standard',
+    stock: 0, standardAmount: 1, fullPrice: 0,
+    dealType: 'none', dealQty: 0, dealPrice: 0, freeQty: 0
+  },
+  {
+    id: 5, name: 'Median', price: 35, productType: 'standard',
+    stock: 0, standardAmount: 1, fullPrice: 0,
+    dealType: 'none', dealQty: 0, dealPrice: 0, freeQty: 0
+  }
 ];
 
 function normalizeProduct(p, idx){
@@ -117,7 +116,7 @@ function cartStockForProduct(productId){
     if(!p) return sum;
     if(value && typeof value==='object' && value.manual) return sum + Number(value.stockUsed||0);
     if(p.productType==='fractional_large' && largeVariants[variant]) return sum + largeVariants[variant](p).stockPer*Number(value||0);
-    return sum;
+    return sum + Number(value||0);
   },0);
 }
 
@@ -133,25 +132,48 @@ function renderLargeProduct(p){
   return `<div class="product large-product-card">
     <div class="product-top"><div><b>${esc(p.name)}</b><small>Fractional inventory</small></div><span class="stock-pill">${qtyFmt(remaining)} in stock</span></div>
     <div class="variant-grid">${buttons.map(([variant,title,sub])=>`<button class="variant-btn ${variant==='free'?'free-variant':''}" onclick="addLargeVariant(${p.id},'${variant}')"><strong>${title}</strong><small>${sub}</small></button>`).join('')}</div>
-    <details class="misc-sale"><summary>Misc large sale</summary>
-      <div class="misc-grid">
-        <label>Sale price €<input id="miscLargePrice" type="number" min="0" step=".01" placeholder="50"></label>
-        <label>Stock used<input id="miscLargeStock" type="number" min="0.001" step=".1" value="${p.standardAmount}"></label>
-        <label>Paid portions for driver<input id="miscLargePaid" type="number" min="0" step="1" value="1"></label>
-      </div>
-      <button class="ghost wide" type="button" onclick="addMiscLarge(${p.id})">Add misc sale</button>
-      <small class="muted">Driver commission = €10 × paid portions. Use 0 for a free/misc giveaway.</small>
-    </details>
   </div>`;
 }
 
 function renderProducts(){
   $('#productGrid').innerHTML = state.products.map(p=>{
     if(p.productType==='fractional_large') return renderLargeProduct(p);
-    return `<button class="product" onclick="addProduct(${p.id})"><b>${esc(p.name)}</b><small>${money(p.price)} each</small>${dealText(p)?`<span class="deal">${dealText(p)}</span>`:''}</button>`;
-  }).join('');
+    const remaining=Math.max(0,Number(p.stock||0)-cartStockForProduct(p.id));
+    return `<button class="product" onclick="addProduct(${p.id})"><b>${esc(p.name)}</b><small>${money(p.price)} each · ${qtyFmt(remaining)} in stock</small>${dealText(p)?`<span class="deal">${dealText(p)}</span>`:''}</button>`;
+  }).join('') + renderUnifiedMisc();
   renderCart();
 }
+
+function renderUnifiedMisc(){
+  const opts=state.products.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  return `<details class="misc-sale unified-misc">
+    <summary>Misc sale</summary>
+    <div class="misc-grid">
+      <label>Product<select id="miscProduct" onchange="updateMiscHelp()">${opts}</select></label>
+      <label>Sale price €<input id="miscPrice" type="number" min="0" step=".01" placeholder="50"></label>
+      <label>Stock used / units delivered<input id="miscStock" type="number" min="0.001" step=".1" value="0.7"></label>
+      <label id="miscPaidWrap">Paid portions (Large only)<input id="miscPaid" type="number" min="0" step="1" value="1"></label>
+    </div>
+    <button class="ghost wide" type="button" onclick="addMiscSale()">Add misc sale</button>
+    <small class="muted" id="miscHelp">Large: commission is based on paid portions. Other products calculate commission automatically.</small>
+  </details>`;
+}
+
+window.updateMiscHelp = () => {
+  const id=Number($('#miscProduct')?.value||1);
+  const p=state.products.find(x=>x.id===id);
+  if(!p) return;
+  const large=p.productType==='fractional_large';
+  if($('#miscPaidWrap')) $('#miscPaidWrap').style.display=large?'':'none';
+  if($('#miscStock') && document.activeElement!==$('#miscStock')) $('#miscStock').value=large?p.standardAmount:1;
+  const own=isOwnCustomer();
+  let text='';
+  if(id===1) text=`Large: ${own?'€15':'€10'} × paid portions.`;
+  else if(id===2 || id===3) text=`${p.name}: ${own?'€15':'€10'} per €50 sold (calculated proportionally).`;
+  else if(id===4) text=`NEP: ${own?'€15':'€12.50'} per €50 sold (calculated proportionally).`;
+  else if(id===5) text=`Median: ${own?'€15':'€10'} per unit sold.`;
+  if($('#miscHelp')) $('#miscHelp').textContent=text;
+};
 
 window.addLargeVariant = (id,variant) => {
   const p=state.products.find(x=>x.id===id);
@@ -163,28 +185,34 @@ window.addLargeVariant = (id,variant) => {
   cart[key]=(cart[key]||0)+1;
   renderProducts();
 };
-window.addMiscLarge = id => {
+window.addMiscSale = () => {
+  const id=Number($('#miscProduct')?.value);
   const p=state.products.find(x=>x.id===id);
   if(!p) return;
-  const price=Number($('#miscLargePrice')?.value);
-  const stockUsed=Number($('#miscLargeStock')?.value);
-  const paidPortions=Math.max(0,Math.floor(Number($('#miscLargePaid')?.value)||0));
+  const price=Number($('#miscPrice')?.value);
+  const stockUsed=Number($('#miscStock')?.value);
+  const paidPortions=Math.max(0,Math.floor(Number($('#miscPaid')?.value)||0));
   if(!Number.isFinite(price) || price<0) return toast('Enter a valid misc sale price');
   if(!Number.isFinite(stockUsed) || stockUsed<=0) return toast('Enter stock used');
-  if(cartStockForProduct(id)+stockUsed > p.stock+0.0001) return toast('Not enough stock');
+  if(cartStockForProduct(id)+stockUsed > Number(p.stock||0)+0.0001) return toast(`Not enough ${p.name} stock`);
   const key=`${id}:misc:${Date.now()}`;
-  cart[key]={qty:1,manual:true,price,stockUsed,paidPortions,label:'Misc large sale'};
+  cart[key]={qty:1,manual:true,price,stockUsed,paidPortions,label:'Misc sale'};
   renderProducts();
 };
 
-window.addProduct = id => { const key=cartKey(id,'unit'); cart[key]=(cart[key]||0)+1; renderCart(); };
+window.addProduct = id => {
+  const p=state.products.find(x=>x.id===id);
+  if(!p) return;
+  if(cartStockForProduct(id)+1 > Number(p.stock||0)+0.0001) return toast(`Not enough ${p.name} stock`);
+  const key=cartKey(id,'unit'); cart[key]=(cart[key]||0)+1; renderProducts();
+};
 window.changeQty = (key,d) => {
   if(cart[key] && typeof cart[key]==='object'){ if(d<0) delete cart[key]; renderProducts(); return; }
   const {id,variant}=parseCartKey(key);
   const p=state.products.find(x=>x.id===id);
-  if(d>0 && p?.productType==='fractional_large'){
-    const v=largeVariants[variant](p);
-    if(cartStockForProduct(id)+v.stockPer > p.stock+0.0001) return toast('Not enough stock');
+  if(d>0 && p){
+    const addStock=p.productType==='fractional_large' ? largeVariants[variant](p).stockPer : 1;
+    if(cartStockForProduct(id)+addStock > Number(p.stock||0)+0.0001) return toast(`Not enough ${p.name} stock`);
   }
   cart[key]=Math.max(0,(cart[key]||0)+d);
   if(!cart[key]) delete cart[key];
@@ -194,6 +222,24 @@ window.changeQty = (key,d) => {
 function isOwnCustomer(){ return !!$('#ownCustomer')?.checked; }
 function currentCommissionRate(){ return isOwnCustomer() ? 15 : 10; }
 
+function commissionFor(p, revenue, units=1, paidPortions=1){
+  const own=isOwnCustomer();
+  if(Number(p.id)===1) return Number(paidPortions||0) * (own?15:10);
+  if(Number(p.id)===2 || Number(p.id)===3) return Number(revenue||0) * (own?15:10) / 50;
+  if(Number(p.id)===4) return Number(revenue||0) * (own?15:12.5) / 50;
+  if(Number(p.id)===5) return Number(units||0) * (own?15:10);
+  return 0;
+}
+
+function commissionLabelFor(p){
+  const own=isOwnCustomer();
+  if(Number(p.id)===1) return `${money(own?15:10)} per paid portion`;
+  if(Number(p.id)===2 || Number(p.id)===3) return `${money(own?15:10)} per €50 sold`;
+  if(Number(p.id)===4) return `${money(own?15:12.5)} per €50 sold`;
+  if(Number(p.id)===5) return `${money(own?15:10)} per unit`;
+  return '';
+}
+
 function cartEntries(){
   return Object.entries(cart).map(([key,value])=>{
     const parts=key.split(':');
@@ -202,7 +248,9 @@ function cartEntries(){
     const p=state.products.find(x=>x.id===id);
     if(!p || !value) return null;
     if(value && typeof value==='object' && value.manual){
-      return {key,p,variant:'misc',qty:1,label:value.label||'Misc large sale',total:Number(value.price),unitPrice:Number(value.price),stockUsed:cleanFloat(value.stockUsed),deliveredQty:1,paidPortions:Number(value.paidPortions||0),commission:Number(value.paidPortions||0)*currentCommissionRate(),commissionRate:currentCommissionRate(),manual:true};
+      const delivered=p.productType==='fractional_large' ? 1 : Number(value.stockUsed||0);
+      const paid=Number(value.paidPortions||0);
+      return {key,p,variant:'misc',qty:1,label:value.label||'Misc sale',total:Number(value.price),unitPrice:Number(value.price),stockUsed:cleanFloat(value.stockUsed),deliveredQty:delivered,paidPortions:paid,commission:commissionFor(p,Number(value.price),delivered,paid),commissionRate:null,manual:true};
     }
     const q=Number(value);
     if(p.productType==='fractional_large'){
@@ -218,7 +266,8 @@ function cartEntries(){
       };
     }
     const paid=paidUnitsFor(p,q);
-    return {key,p,variant:'unit',qty:q,label:p.name,total:linePrice(p,q),unitPrice:p.price,stockUsed:0,deliveredQty:q,paidPortions:paid,commission:paid*currentCommissionRate(),commissionRate:currentCommissionRate()};
+    const total=linePrice(p,q);
+    return {key,p,variant:'unit',qty:q,label:p.name,total,unitPrice:p.price,stockUsed:q,deliveredQty:q,paidPortions:paid,commission:commissionFor(p,total,q,paid),commissionRate:null};
   }).filter(Boolean);
 }
 
@@ -228,7 +277,7 @@ function renderCart(){
   $('#cart').innerHTML = items.length ? items.map(i=>{
     const meta = i.p.productType==='fractional_large'
       ? `${i.qty}× ${esc(i.label)} · ${money(i.total)} · uses ${qtyFmt(i.stockUsed)} stock · driver ${money(i.commission)}`
-      : `${i.qty} unit${i.qty>1?'s':''} · ${money(i.total)} · driver ${money(i.commission)}`;
+      : `${i.qty} unit${i.qty>1?'s':''} · ${money(i.total)} · uses ${qtyFmt(i.stockUsed)} stock · driver ${money(i.commission)}`;
     const controls=i.manual?`<div class="qty"><button onclick="changeQty('${i.key}',-1)">Remove</button></div>`:`<div class="qty"><button onclick="changeQty('${i.key}',-1)">−</button><b>${i.qty}</b><button onclick="changeQty('${i.key}',1)">+</button></div>`;
     return `<div class="cart-item"><div><b>${esc(i.p.name)}${i.p.productType==='fractional_large'?` · ${esc(i.label)}`:''}</b><div class="history-meta">${meta}</div></div>${controls}<strong>${money(i.total)}</strong></div>`;
   }).join('') : `<p class="muted">Tap a product option to add it.</p>`;
@@ -253,7 +302,8 @@ async function recordSale(){
     stockUsed:i.stockUsed,
     paidPortions:i.paidPortions ?? i.qty,
     commission:i.commission ?? 0,
-    commissionRate:i.commissionRate ?? currentCommissionRate()
+    commissionRate:i.commissionRate ?? null,
+    customerSource: isOwnCustomer() ? 'driver_own' : 'company'
   }));
   const sale={
     id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
@@ -311,7 +361,7 @@ function itemHistoryText(i){
 }
 
 function renderHistory(){
-  $('#historyList').innerHTML = state.sales.length ? state.sales.map(s=>`<div class="history-item"><div class="history-head"><b>${money(s.total)}</b><span>${new Date(s.date).toLocaleString()}</span></div><div>${s.items.map(itemHistoryText).join('<br>')}</div><div class="commission-line">Driver earned ${money(saleCommission(s))}${s.customerSource==='driver_own'?' · Own customer (€15 each)':' · Regular (€10 each)'}</div>${s.note?`<div class="history-meta">${esc(s.note)}</div>`:''}</div>`).join('') : `<p class="muted">No sales yet.</p>`;
+  $('#historyList').innerHTML = state.sales.length ? state.sales.map(s=>`<div class="history-item"><div class="history-head"><b>${money(s.total)}</b><span>${new Date(s.date).toLocaleString()}</span></div><div>${s.items.map(itemHistoryText).join('<br>')}</div><div class="commission-line">Driver earned ${money(saleCommission(s))} · ${s.customerSource==='driver_own'?'Driver own customer':'Regular customer'}</div>${s.note?`<div class="history-meta">${esc(s.note)}</div>`:''}</div>`).join('') : `<p class="muted">No sales yet.</p>`;
 }
 
 function renderStats(){
@@ -328,7 +378,7 @@ function renderStats(){
   $('#productStats').innerHTML=state.products.map(p=>{
     let q=0,r=0,stockUsed=0,commission=0;
     state.sales.forEach(s=>s.items.filter(i=>Number(i.id)===Number(p.id)).forEach(i=>{q+=Number(i.deliveredQty ?? i.qty ?? 0);r+=Number(i.total||0);stockUsed+=Number(i.stockUsed||0);commission+=itemCommission(i);}));
-    const extra=p.productType==='fractional_large'?` · ${qtyFmt(stockUsed)} stock used · ${qtyFmt(p.stock)} left`:'';
+    const extra=` · ${qtyFmt(stockUsed)} stock used · ${qtyFmt(p.stock)} left`;
     return `<div class="row stat-row"><span>${esc(p.name)}<small class="muted stat-small">${qtyFmt(q)} delivered${extra} · driver ${money(commission)}</small></span><b>${money(r)}</b></div>`;
   }).join('');
 }
@@ -342,7 +392,7 @@ function renderSettings(){
         <div class="deal-summary"><b>Built-in deal buttons</b><span>3 + 1 = ${money(p.price*3)} · stock ${qtyFmt(p.standardAmount*4)}</span><span>2 + 1 = ${money(p.price*2)} · stock ${qtyFmt(p.standardAmount*3)}</span><span>Free = ${qtyFmt(p.standardAmount)} stock · €0 driver commission</span><span>Misc = manual price / stock / paid portions</span></div>
       </div>`;
     }
-    return `<div class="setting-product" data-i="${idx}"><b>Product ${idx+1}</b><div class="setting-grid"><label>Name<input data-k="name" value="${attr(p.name)}"></label><label>Unit price<input data-k="price" type="number" min="0" step=".01" value="${p.price}"></label></div><label>Deal<select data-k="dealType"><option value="none" ${p.dealType==='none'?'selected':''}>No deal</option><option value="bundle" ${p.dealType==='bundle'?'selected':''}>Fixed bundle price</option><option value="free" ${p.dealType==='free'?'selected':''}>Buy X get Y free</option></select></label><div class="setting-grid"><label>Deal / buy quantity<input data-k="dealQty" type="number" min="0" value="${p.dealQty||0}"></label><label>Bundle price<input data-k="dealPrice" type="number" min="0" step=".01" value="${p.dealPrice||0}"></label><label>Free quantity<input data-k="freeQty" type="number" min="0" value="${p.freeQty||0}"></label></div></div>`;
+    return `<div class="setting-product" data-i="${idx}"><div class="setting-title"><b>${esc(p.name)}</b><span class="stock-pill">${qtyFmt(p.stock)} stock</span></div><div class="setting-grid"><label>Name<input data-k="name" value="${attr(p.name)}"></label><label>Unit price<input data-k="price" type="number" min="0" step=".01" value="${p.price}"></label><label>Current stock<input data-k="stock" type="number" min="0" step="1" value="${p.stock}"></label></div><div class="deal-summary"><span>${idx===1||idx===2?`Commission: regular €10 / own €15 per €50 sold`:idx===3?`Commission: regular €12.50 / own €15 per €50 sold`:`Commission: regular €10 / own €15 per unit`}</span><span>Misc sales use the same commission rule automatically.</span></div></div>`;
   }).join('');
 }
 
@@ -434,7 +484,8 @@ async function loadCloud({queueIfBusy=true}={}){
         date:s.sold_at,
         items:Array.isArray(s.items)?s.items:[],
         total:Number(s.total),
-        note:s.note||''
+        note:s.note||'',
+        customerSource:(Array.isArray(s.items) && s.items[0]?.customerSource) || 'company'
       }));
       saveLocal();
       renderAll();
@@ -552,6 +603,7 @@ function wireUi(){
   $('#exportJson').onclick=()=>download('sales-backup.json',JSON.stringify(state,null,2),'application/json');
   $('#importJson').onchange=async e=>{try{const x=JSON.parse(await e.target.files[0].text());if(!x.products||!x.sales)throw 0;state={products:x.products.map((p,i)=>normalizeProduct(p,i)),sales:x.sales};saveLocal();renderAll();if(cloudMode){await pushProducts(); await pushLocalSalesIfCloudEmpty(); await loadCloud();}toast('Backup imported')}catch{toast('Invalid backup')}};
   $('#signInBtn').onclick=signIn; $('#signUpBtn').onclick=signUp; $('#localModeBtn').onclick=enterLocalMode; $('#signOutBtn').onclick=signOut; $('#syncNow').onclick=loadCloud;
+  if($('#ownCustomer')) $('#ownCustomer').onchange=()=>{renderCart(); updateMiscHelp();};
   let deferred;
   window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferred=e;const b=$('#installBtn');b.hidden=false;b.onclick=async()=>{await deferred.prompt();deferred=null;b.hidden=true;}});
 }

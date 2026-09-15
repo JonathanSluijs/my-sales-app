@@ -52,7 +52,7 @@
           <div id="productGrid" class="product-grid"></div>
           <div id="cart" class="cart"></div>
           <div class="row total"><span>Total</span><strong id="cartTotal">€0.00</strong></div>
-          <label class="customer-source"><input id="ownCustomer" type="checkbox"> <span><b>My own customer</b><small>Driver commission becomes €15 per paid portion instead of €10.</small></span></label>
+          <label class="customer-toggle"><input id="ownCustomer" type="checkbox"> <span><b>Driver's own customer</b><small>Use the higher own-customer commission rate for this sale.</small></span></label>
           <label>Note<input id="saleNote" placeholder="Optional"></label>
           <button id="recordSale" class="primary wide">Record sale</button>
         </div>
@@ -86,7 +86,7 @@
 
         <div class="card">
           <h2>Products & deals</h2>
-          <p class="muted">Product 1 supports 0.7, full-unit, 3+1, 2+1, free 0.7, and manual misc sales. Driver commission is €10 per paid portion and €0 for free portions.</p>
+          <p class="muted">Stock and prices can be adjusted here. Commission is calculated automatically from the selected customer type and product.</p>
           <div id="settingsProducts"></div>
           <button id="saveSettings" class="primary wide">Save settings</button>
         </div>
