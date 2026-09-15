@@ -597,7 +597,7 @@ function wireUi(){
 
 async function boot(){
   initSupabase(); wireUi();
-  if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+  if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js?v=3.7', {updateViaCache:'none'});
   if(supabaseClient){
     const {data}=await supabaseClient.auth.getSession();
     if(data.session){ session=data.session; await enterCloudMode(); return; }
