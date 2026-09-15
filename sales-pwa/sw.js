@@ -1,5 +1,5 @@
-const CACHE='sales-log-v4.0';
-const APP_SHELL=['./','index.html','style.css?v=4.0','app.js?v=4.0','config.js','manifest.json?v=4.0','icon.svg'];
+const CACHE='sales-log-v5.0';
+const APP_SHELL=['./','index.html','style.css?v=5.0','app.js?v=5.0','config.js','manifest.json?v=5.0','icon.svg'];
 
 self.addEventListener('install',event=>{
   self.skipWaiting();

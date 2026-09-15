@@ -1,4 +1,4 @@
-const LOCAL_KEY = 'saleslog_v4_0';
+const LOCAL_KEY = 'saleslog_v5_0';
 const defaultProducts = [
   {
     id: 1, name: 'Large product', price: 50, productType: 'fractional_large',
@@ -61,6 +61,52 @@ let syncing = false;
 let syncPromise = null;
 let syncQueued = false;
 let realtimeReloadTimer = null;
+
+let currentRole = 'driver';
+let adminDrivers = [];
+let selectedDriverId = null;
+let selectedDriverEmail = '';
+let selectedDriverName = '';
+
+
+function configuredAdminEmails(){
+  const cfg = window.SALES_APP_CONFIG || {};
+  return Array.isArray(cfg.adminEmails)
+    ? cfg.adminEmails.map(e => String(e).trim().toLowerCase()).filter(Boolean)
+    : [];
+}
+
+function resolveRole(){
+  const email = String(session?.user?.email || '').trim().toLowerCase();
+  currentRole = cloudMode && email && configuredAdminEmails().includes(email) ? 'admin' : 'driver';
+  return currentRole;
+}
+
+function isAdmin(){
+  return resolveRole() === 'admin';
+}
+
+function applyRoleUI(){
+  const admin = isAdmin();
+  const badge = $('#roleBadge');
+  const nav = $('#adminNav');
+
+  if(badge){
+    badge.textContent = admin ? 'Admin' : 'Driver';
+    badge.className = 'role-badge' + (admin ? ' admin' : '');
+  }
+  if(nav) nav.hidden = !admin;
+
+  // The normal Settings product section remains read-only.
+  if($('#saveSettings')) $('#saveSettings').hidden = true;
+
+  // Never leave a driver on an admin screen.
+  if(!admin && $('#admin')?.classList.contains('active')){
+    document.querySelectorAll('nav button,.tab').forEach(x => x.classList.remove('active'));
+    document.querySelector('[data-tab="sale"]')?.classList.add('active');
+    $('#sale')?.classList.add('active');
+  }
+}
 
 const money = n => new Intl.NumberFormat('en-BE', {style:'currency', currency:'EUR'}).format(Number(n || 0));
 const qtyFmt = n => Number(n || 0).toLocaleString(undefined,{maximumFractionDigits:3});
@@ -285,11 +331,17 @@ function renderCart(){
 }
 
 async function recordSale(){
+  if(isAdmin()) return toast('Admin accounts manage drivers; sign in as a driver to record a sale');
   const entries=cartEntries();
   if(!entries.length) return toast('Add a product first');
   for(const i of entries){
     if(i.stockUsed>0 && i.stockUsed > i.p.stock+0.0001) return toast(`Not enough ${i.p.name} stock`);
   }
+  const supplementAmount = Number($('#supplementAmount')?.value || 0);
+  const supplementNote = $('#supplementNote')?.value.trim() || '';
+  if(!Number.isFinite(supplementAmount) || supplementAmount < 0) return toast('Enter a valid supplement amount');
+  if(supplementAmount > 0 && !supplementNote) return toast('Supplement reason is required');
+
   const items=entries.map(i=>({
     id:i.p.id,
     name:i.p.name,
@@ -305,13 +357,20 @@ async function recordSale(){
     commissionRate:i.commissionRate ?? null,
     customerSource: isOwnCustomer() ? 'driver_own' : 'company'
   }));
+  if(items.length){
+    items[0].supplementAmount = supplementAmount;
+    items[0].supplementNote = supplementNote;
+  }
   const sale={
     id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
     date: new Date().toISOString(),
     items,
     total: items.reduce((a,b)=>a+b.total,0),
     note: $('#saleNote').value.trim(),
-    customerSource: isOwnCustomer() ? 'driver_own' : 'company'
+    customerSource: isOwnCustomer() ? 'driver_own' : 'company',
+    supplementAmount,
+    supplementNote,
+    supplementStatus: supplementAmount > 0 ? 'pending' : 'none'
   };
 
   if(cloudMode){
@@ -320,11 +379,15 @@ async function recordSale(){
       p_sold_at:sale.date,
       p_total:sale.total,
       p_note:sale.note,
-      p_items:sale.items
+      p_items:sale.items,
+      p_supplement_amount:sale.supplementAmount,
+      p_supplement_note:sale.supplementNote
     });
     if(error){ console.error(error); return toast(error.message?.includes('Insufficient stock') ? 'Not enough stock' : 'Cloud sale failed — nothing was recorded'); }
     cart={};
     $('#saleNote').value='';
+    if($('#supplementAmount')) $('#supplementAmount').value='';
+    if($('#supplementNote')) $('#supplementNote').value='';
     if($('#ownCustomer')) $('#ownCustomer').checked=false;
     // Wait for any in-flight refresh, then force one more pass if realtime fired mid-sale.
     syncQueued=true;
@@ -340,6 +403,8 @@ async function recordSale(){
 
   entries.forEach(i=>{ if(i.stockUsed>0) i.p.stock=cleanFloat(i.p.stock-i.stockUsed); });
   state.sales.unshift(sale); cart={}; $('#saleNote').value='';
+    if($('#supplementAmount')) $('#supplementAmount').value='';
+    if($('#supplementNote')) $('#supplementNote').value='';
     if($('#ownCustomer')) $('#ownCustomer').checked=false; saveLocal(); renderAll(); toast('Sale recorded');
 }
 
@@ -353,7 +418,26 @@ function itemCommission(i){
   if(i.variant==='standard' || i.variant==='full') return q*10;
   return q*10;
 }
-function saleCommission(s){ return (s.items||[]).reduce((a,i)=>a+itemCommission(i),0); }
+function requestedSupplement(s){
+  if(s?.supplementAmount !== undefined) return Number(s.supplementAmount || 0);
+  return Number((s?.items || [])[0]?.supplementAmount || 0);
+}
+function supplementStatus(s){
+  return s?.supplementStatus || (requestedSupplement(s)>0 ? 'pending' : 'none');
+}
+function saleSupplement(s){
+  return supplementStatus(s)==='approved' ? requestedSupplement(s) : 0;
+}
+
+function supplementReason(s){
+  return s?.supplementNote || (s?.items || [])[0]?.supplementNote || '';
+}
+function baseSaleCommission(s){
+  return (s.items||[]).reduce((a,i)=>a+itemCommission(i),0);
+}
+function saleCommission(s){
+  return baseSaleCommission(s) + saleSupplement(s);
+}
 function itemHistoryText(i){
   const commission=itemCommission(i);
   if(i.variantLabel) return `${i.qty}× ${esc(i.name)} · ${esc(i.variantLabel)}${Number(i.stockUsed)>0?` · −${qtyFmt(i.stockUsed)} stock`:''} · driver ${money(commission)}`;
@@ -361,9 +445,22 @@ function itemHistoryText(i){
 }
 
 function renderHistory(){
-  $('#historyList').innerHTML = state.sales.length ? state.sales.map(s=>`<div class="history-item"><div class="history-head"><b>${money(s.total)}</b><span>${new Date(s.date).toLocaleString()}</span></div><div>${s.items.map(itemHistoryText).join('<br>')}</div><div class="commission-line">Driver earned ${money(saleCommission(s))} · ${s.customerSource==='driver_own'?'Driver own customer':'Regular customer'}</div>${s.note?`<div class="history-meta">${esc(s.note)}</div>`:''}</div>`).join('') : `<p class="muted">No sales yet.</p>`;
+  $('#historyList').innerHTML = state.sales.length ? state.sales.map(sale=>{
+    const requested = requestedSupplement(sale);
+    const status = supplementStatus(sale);
+    const approvedSupplement = saleSupplement(sale);
+    const baseCommission = baseSaleCommission(sale);
+    const totalOwed = baseCommission + approvedSupplement;
+    const statusText = status==='approved' ? 'Approved' : status==='declined' ? 'Declined' : 'Pending admin approval';
+    return `<div class="history-item">
+      <div class="history-head"><b>${money(sale.total)}</b><span>${new Date(sale.date).toLocaleString()}</span></div>
+      <div>${sale.items.map(itemHistoryText).join('<br>')}</div>
+      <div class="commission-line">Driver earned ${money(totalOwed)} · ${sale.customerSource==='driver_own'?'Driver own customer':'Regular customer'}</div>
+      ${requested>0?`<div class="history-meta"><b>Extra pay request:</b> ${money(requested)} · ${esc(supplementReason(sale))} · <b>${statusText}</b></div>`:''}
+      ${sale.note?`<div class="history-meta">${esc(sale.note)}</div>`:''}
+    </div>`;
+  }).join('') : `<p class="muted">No sales yet.</p>`;
 }
-
 function renderStats(){
   const now=new Date();
   const today=state.sales.filter(s=>new Date(s.date).toDateString()===now.toDateString());
@@ -418,7 +515,7 @@ function mapCloudProduct(p,idx){
 
 function productRowsForCloud(){
   return state.products.map((p,idx)=>({
-    user_id:session.user.id,
+    user_id:(isAdmin() && selectedDriverId ? selectedDriverId : session.user.id),
     slot:idx+1,
     name:p.name,
     price:p.price,
@@ -444,26 +541,58 @@ async function loadCloud({queueIfBusy=true}={}){
     syncing=true;
     setSyncBadge('Syncing…','working');
     try{
-      const [{data:products,error:pe},{data:sales,error:se}] = await Promise.all([
-        supabaseClient.from('products').select('*').order('slot'),
-        supabaseClient.rpc('get_my_sales')
-      ]);
-      if(pe) throw pe;
-      if(se) throw se;
+      resolveRole();
 
-      if(products?.length){
+      let products=[], sales=[];
+      if(isAdmin()){
+        if(!adminDrivers.length) await loadAdminDrivers();
+        if(!selectedDriverId && adminDrivers.length){
+          selectedDriverId = adminDrivers[0].user_id;
+          selectedDriverEmail = adminDrivers[0].email || '';
+          selectedDriverName = adminDrivers[0].display_name || '';
+        }
+        if(!selectedDriverId){
+          state.products=defaultProducts.map((p,i)=>normalizeProduct({...p,stock:0},i));
+          state.sales=[];
+          renderAll();
+          setSyncBadge('No drivers','ok');
+          return;
+        }
+
+        const [{data:p,error:pe},{data:s,error:se}] = await Promise.all([
+          supabaseClient.rpc('admin_get_driver_products',{p_driver_id:selectedDriverId}),
+          supabaseClient.rpc('admin_get_driver_sales',{p_driver_id:selectedDriverId})
+        ]);
+        if(pe) throw pe;
+        if(se) throw se;
+        products=p||[];
+        sales=s||[];
+      }else{
+        const [{data:p,error:pe},{data:s,error:se}] = await Promise.all([
+          supabaseClient.from('products').select('*').order('slot'),
+          supabaseClient.rpc('get_my_sales')
+        ]);
+        if(pe) throw pe;
+        if(se) throw se;
+        products=p||[];
+        sales=s||[];
+      }
+
+      if(products.length){
         const bySlot=new Map(products.map(p=>[Number(p.slot),p]));
-        state.products=defaultProducts.map((d,idx)=>bySlot.has(idx+1)?mapCloudProduct(bySlot.get(idx+1),idx):normalizeProduct(d,idx));
-        const catalogStale = state.products.some((p,idx)=>{
-          const d=defaultProducts[idx];
-          const cloud=bySlot.get(idx+1);
-          return !cloud || cloud.name!==d.name || Number(cloud.price)!==Number(d.price) ||
-            (cloud.product_type||'standard')!==d.productType;
-        });
-        if(products.length<5 || catalogStale) await pushProducts();
-      } else {
-        state.products=defaultProducts.map((p,i)=>normalizeProduct(p,i));
-        await pushProducts();
+        state.products=defaultProducts.map((d,idx)=>bySlot.has(idx+1)?mapCloudProduct(bySlot.get(idx+1),idx):normalizeProduct({...d,stock:0},idx));
+        if(!isAdmin()){
+          const catalogStale = state.products.some((p,idx)=>{
+            const d=defaultProducts[idx];
+            const cloud=bySlot.get(idx+1);
+            return !cloud || cloud.name!==d.name || Number(cloud.price)!==Number(d.price) ||
+              (cloud.product_type||'standard')!==d.productType;
+          });
+          if(products.length<5 || catalogStale) await pushProducts();
+        }
+      }else{
+        state.products=defaultProducts.map((p,i)=>normalizeProduct({...p,stock:0},i));
+        if(!isAdmin()) await pushProducts();
       }
 
       state.sales=(sales||[]).map(s=>({
@@ -473,9 +602,12 @@ async function loadCloud({queueIfBusy=true}={}){
         total:Number(s.total),
         note:s.note||'',
         customerSource:(Array.isArray(s.items) && s.items[0]?.customerSource) || 'company',
-        supplementAmount:Number((Array.isArray(s.items) && s.items[0]?.supplementAmount)||0),
-        supplementNote:(Array.isArray(s.items) && s.items[0]?.supplementNote)||''
+        supplementAmount:Number(s.supplement_amount ?? ((Array.isArray(s.items) && s.items[0]?.supplementAmount)||0)),
+        supplementNote:s.supplement_note ?? ((Array.isArray(s.items) && s.items[0]?.supplementNote)||''),
+        supplementStatus:s.supplement_status || (Number(s.supplement_amount||0)>0?'pending':'none'),
+        supplementReviewedAt:s.supplement_reviewed_at || null
       }));
+
       saveLocal();
       renderAll();
       setSyncBadge(`Synced · ${state.sales.length}`,'ok');
@@ -488,18 +620,15 @@ async function loadCloud({queueIfBusy=true}={}){
     }
   })();
 
-  try {
-    await syncPromise;
-  } finally {
+  try { await syncPromise; }
+  finally {
     syncPromise=null;
     if(syncQueued){
       syncQueued=false;
-      // Run once more to pick up any database changes that arrived mid-sync.
       return loadCloud({queueIfBusy:false});
     }
   }
 }
-
 function scheduleRealtimeReload(){
   if(realtimeReloadTimer) clearTimeout(realtimeReloadTimer);
   realtimeReloadTimer=setTimeout(()=>{
@@ -509,6 +638,7 @@ function scheduleRealtimeReload(){
 }
 
 async function pushProducts(){
+  if(isAdmin()) throw new Error('Admin stock changes must use admin_set_driver_stock');
   const rows=productRowsForCloud();
   const {error}=await supabaseClient.from('products').upsert(rows,{onConflict:'user_id,slot'}); if(error) throw error;
 }
@@ -527,12 +657,11 @@ function setSyncBadge(text,mode=''){ const b=$('#syncBadge'); b.textContent=text
 function setupRealtime(){
   if(!cloudMode) return;
   if(realtimeChannel) supabaseClient.removeChannel(realtimeChannel);
-  realtimeChannel=supabaseClient.channel(`sales-${session.user.id}`)
-    .on('postgres_changes',{event:'*',schema:'public',table:'sales',filter:`user_id=eq.${session.user.id}`},scheduleRealtimeReload)
-    .on('postgres_changes',{event:'*',schema:'public',table:'products',filter:`user_id=eq.${session.user.id}`},scheduleRealtimeReload)
+  realtimeChannel=supabaseClient.channel(`saleslog-${session.user.id}`)
+    .on('postgres_changes',{event:'*',schema:'public',table:'sales'},scheduleRealtimeReload)
+    .on('postgres_changes',{event:'*',schema:'public',table:'products'},scheduleRealtimeReload)
     .subscribe();
 }
-
 function showApp(){
   $('#authScreen').hidden=true; $('#mainApp').hidden=false;
   $('#today').textContent=new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'});
@@ -560,11 +689,11 @@ async function signUp(){
 }
 
 async function enterCloudMode(){
-  cloudMode=true; showApp(); $('#accountStatus').textContent=session.user.email; setSyncBadge('Syncing…','working');
-  await pushLocalSalesIfCloudEmpty(); await loadCloud(); setupRealtime();
+  cloudMode=true; resolveRole(); showApp(); $('#accountStatus').textContent=session.user.email; setSyncBadge('Syncing…','working');
+  if(!isAdmin()) await pushLocalSalesIfCloudEmpty(); await loadCloud(); setupRealtime();
 }
 
-function enterLocalMode(){ cloudMode=false; session=null; showApp(); $('#accountStatus').textContent='Local mode'; setSyncBadge('Local'); }
+function enterLocalMode(){ cloudMode=false; session=null; currentRole='driver'; showApp(); $('#accountStatus').textContent='Local mode'; setSyncBadge('Local'); }
 
 async function signOut(){
   if(supabaseClient && cloudMode) await supabaseClient.auth.signOut();
@@ -582,174 +711,127 @@ function initSupabase(){
   }
 }
 
-function isAdmin(){
-  if(!cloudMode || !session?.user?.email) return false;
 
-  const cfg = window.SALES_APP_CONFIG || {};
-  const adminEmails = Array.isArray(cfg.adminEmails)
-    ? cfg.adminEmails.map(e => String(e).trim().toLowerCase())
-    : [];
-
-  return adminEmails.includes(
-    String(session.user.email).trim().toLowerCase()
-  );
+async function loadAdminDrivers(){
+  if(!cloudMode || !isAdmin()) return;
+  const {data,error}=await supabaseClient.rpc('admin_list_drivers');
+  if(error) throw error;
+  adminDrivers=(data||[]).map(d=>({
+    user_id:d.user_id,
+    email:d.email||'',
+    display_name:d.display_name||''
+  }));
+  if(selectedDriverId && !adminDrivers.some(d=>d.user_id===selectedDriverId)) selectedDriverId=null;
 }
 
-function applyRoleUI(){
-  const admin = isAdmin();
-
-  const badge = $('#roleBadge');
-  const adminNav = $('#adminNav');
-
-  if(badge){
-    badge.textContent = admin ? 'Admin' : 'Driver';
-    badge.className = 'role-badge ' + (admin ? 'admin-role' : 'driver-role');
-  }
-
-  if(adminNav){
-    adminNav.hidden = !admin;
-  }
-
-  // Driver settings remain read-only.
-  // Admin uses the dedicated Admin tab for stock management.
-  if($('#saveSettings')){
-    $('#saveSettings').hidden = true;
-  }
-
-  // Safety: if a non-admin somehow has the Admin tab open,
-  // immediately move them back to New Sale.
-  const adminTab = $('#admin');
-
-  if(!admin && adminTab?.classList.contains('active')){
-    document.querySelectorAll('nav button,.tab')
-      .forEach(x => x.classList.remove('active'));
-
-    document.querySelector('[data-tab="sale"]')?.classList.add('active');
-    $('#sale')?.classList.add('active');
-  }
+async function selectAdminDriver(driverId){
+  selectedDriverId=driverId;
+  const d=adminDrivers.find(x=>x.user_id===driverId);
+  selectedDriverEmail=d?.email||'';
+  selectedDriverName=d?.display_name||'';
+  await loadCloud({queueIfBusy:false});
 }
 
 function renderAdmin(){
-  if(!isAdmin()) return;
-
-  const revenue = state.sales.reduce(
-    (sum, sale) => sum + Number(sale.total || 0),
-    0
-  );
-
-  const commissions = state.sales.reduce(
-    (sum, sale) => sum + saleCommission(sale),
-    0
-  );
-
-  const supplements = state.sales.reduce(
-    (sum, sale) => sum + Number(sale.supplementAmount || 0),
-    0
-  );
-
-  if($('#adminRevenue')){
-    $('#adminRevenue').textContent = money(revenue);
+  if(!$('#adminStock')) return;
+  if(!isAdmin()){
+    $('#adminStock').innerHTML='';
+    return;
   }
 
-  if($('#adminDriverOwed')){
-    $('#adminDriverOwed').textContent = money(commissions + supplements);
+  const selector=$('#adminDriverSelect');
+  if(selector){
+    selector.innerHTML=adminDrivers.length
+      ? adminDrivers.map(d=>`<option value="${attr(d.user_id)}" ${d.user_id===selectedDriverId?'selected':''}>${esc(d.display_name || d.email || d.user_id)}</option>`).join('')
+      : '<option value="">No driver accounts yet</option>';
+    selector.disabled=!adminDrivers.length;
+  }
+  if($('#adminDriverLabel')){
+    $('#adminDriverLabel').textContent=selectedDriverId
+      ? `Managing ${selectedDriverName || selectedDriverEmail || selectedDriverId}`
+      : 'Create/sign in with a driver account first.';
   }
 
-  if($('#adminSupplements')){
-    $('#adminSupplements').textContent = money(supplements);
-  }
+  const revenue=state.sales.reduce((a,x)=>a+Number(x.total||0),0);
+  const owed=state.sales.reduce((a,x)=>a+saleCommission(x),0);
+  const approved=state.sales.reduce((a,x)=>a+saleSupplement(x),0);
+  const pending=state.sales.filter(x=>supplementStatus(x)==='pending').reduce((a,x)=>a+requestedSupplement(x),0);
 
-  if($('#adminSalesCount')){
-    $('#adminSalesCount').textContent = state.sales.length;
-  }
+  if($('#adminRevenue')) $('#adminRevenue').textContent=money(revenue);
+  if($('#adminDriverOwed')) $('#adminDriverOwed').textContent=money(owed);
+  if($('#adminSupplements')) $('#adminSupplements').textContent=money(approved);
+  if($('#adminPendingSupplements')) $('#adminPendingSupplements').textContent=money(pending);
+  if($('#adminSalesCount')) $('#adminSalesCount').textContent=state.sales.length;
 
-  if($('#adminStock')){
-    $('#adminStock').innerHTML = state.products.map((p, index) => `
-      <div class="admin-stock-row">
+  $('#adminStock').innerHTML = selectedDriverId ? state.products.map((p,index)=>`
+    <div class="admin-stock-row">
+      <div><b>${esc(p.name)}</b><small>Current stock assigned to this driver: ${qtyFmt(p.stock)}</small></div>
+      <input class="admin-stock-input" data-index="${index}" type="number" min="0"
+        step="${p.productType==='fractional_large'?'0.1':'1'}" value="${Number(p.stock||0)}">
+    </div>
+  `).join('') : '<p class="muted">Select a driver first.</p>';
+
+  const requests=state.sales.filter(s=>requestedSupplement(s)>0);
+  if($('#adminSupplementRequests')){
+    $('#adminSupplementRequests').innerHTML=requests.length ? requests.map(s=>{
+      const status=supplementStatus(s);
+      return `<div class="approval-row">
         <div>
-          <b>${esc(p.name)}</b>
-          <small class="muted">
-            Current driver stock: ${qtyFmt(p.stock)}
-          </small>
+          <b>${money(requestedSupplement(s))}</b>
+          <span class="status-pill ${status}">${status}</span>
+          <small>${new Date(s.date).toLocaleString()} · ${esc(supplementReason(s))}</small>
+          ${s.note?`<small>Sale note: ${esc(s.note)}</small>`:''}
         </div>
-
-        <label>
-          New stock
-          <input
-            class="admin-stock-input"
-            data-index="${index}"
-            type="number"
-            min="0"
-            step="${p.productType === 'fractional_large' ? '0.1' : '1'}"
-            value="${Number(p.stock || 0)}"
-          >
-        </label>
-      </div>
-    `).join('');
+        ${status==='pending'?`<div class="approval-actions">
+          <button class="approve-btn" onclick="reviewSupplement('${attr(s.id)}','approved')">Approve</button>
+          <button class="decline-btn" onclick="reviewSupplement('${attr(s.id)}','declined')">Decline</button>
+        </div>`:''}
+      </div>`;
+    }).join('') : '<p class="muted">No extra-pay requests for this driver.</p>';
   }
 }
 
+async function reviewSupplement(saleId,status){
+  if(!isAdmin() || !selectedDriverId) return toast('Select a driver first');
+  const {error}=await supabaseClient.rpc('admin_review_supplement',{
+    p_driver_id:selectedDriverId,
+    p_sale_id:saleId,
+    p_status:status
+  });
+  if(error){ console.error(error); return toast('Could not update extra pay request'); }
+  await loadCloud({queueIfBusy:false});
+  toast(status==='approved'?'Extra pay approved':'Extra pay declined');
+}
+window.reviewSupplement=reviewSupplement;
+
 async function adminSaveStock(){
-  if(!isAdmin()){
-    return toast('Admin access required');
-  }
+  if(!isAdmin()) return toast('Admin access required');
+  if(!selectedDriverId) return toast('Select a driver first');
 
-  const reason = $('#stockReason')?.value.trim();
+  const reason=$('#stockReason')?.value.trim()||'';
+  if(!reason) return toast('Stock adjustment reason is required');
 
-  if(!reason){
-    return toast('Enter a reason for the stock adjustment');
-  }
-
-  const inputs = document.querySelectorAll('.admin-stock-input');
-
-  const newProducts = state.products.map(p => ({...p}));
-  let changed = false;
-
-  for(const input of inputs){
-    const index = Number(input.dataset.index);
-    const value = Number(input.value);
-
-    if(!Number.isFinite(value) || value < 0){
-      return toast('Enter valid stock quantities');
+  const quantities={};
+  for(const input of document.querySelectorAll('.admin-stock-input')){
+    const index=Number(input.dataset.index);
+    const value=Number(input.value);
+    if(!Number.isFinite(value)||value<0) return toast('Enter valid stock quantities');
+    if(defaultProducts[index].productType!=='fractional_large'&&!Number.isInteger(value)){
+      return toast(`${defaultProducts[index].name} stock must be a whole number`);
     }
-
-    if(
-      newProducts[index].productType !== 'fractional_large' &&
-      !Number.isInteger(value)
-    ){
-      return toast(`${newProducts[index].name} stock must be a whole number`);
-    }
-
-    const cleaned = cleanFloat(value);
-
-    if(cleaned !== Number(newProducts[index].stock)){
-      changed = true;
-      newProducts[index].stock = cleaned;
-    }
+    quantities[String(index+1)]=cleanFloat(value);
   }
 
-  if(!changed){
-    return toast('No stock changes detected');
-  }
+  const {error}=await supabaseClient.rpc('admin_set_driver_stock',{
+    p_driver_id:selectedDriverId,
+    p_stock:quantities,
+    p_reason:reason
+  });
+  if(error){ console.error(error); return toast('Stock update failed: '+(error.message||'')); }
 
-  state.products = newProducts;
-  saveLocal();
-
-  try{
-    if(cloudMode){
-      await pushProducts();
-      await loadCloud();
-    }else{
-      renderAll();
-    }
-
-    $('#stockReason').value = '';
-
-    toast('Driver stock updated');
-  }catch(error){
-    console.error('Stock update failed:', error);
-    toast('Stock update failed');
-  }
+  $('#stockReason').value='';
+  await loadCloud({queueIfBusy:false});
+  toast('Driver stock updated');
 }
 function renderAll(){ applyRoleUI(); renderProducts(); renderHistory(); renderStats(); renderSettings(); renderAdmin(); }
 
@@ -759,6 +841,7 @@ function wireUi(){
   $('#saveSettings').onclick=saveSettings;
   $('#exportCsv').onclick=exportCsv;
   if($('#adminSaveStock')) $('#adminSaveStock').onclick=adminSaveStock;
+  if($('#adminDriverSelect')) $('#adminDriverSelect').onchange=e=>selectAdminDriver(e.target.value);
   if($('#adminExportCsv')) $('#adminExportCsv').onclick=exportCsv;
   if($('#adminExportJson')) $('#adminExportJson').onclick=()=>download('sales-backup.json',JSON.stringify(state,null,2),'application/json');
   $('#exportJson').onclick=()=>download('sales-backup.json',JSON.stringify(state,null,2),'application/json');

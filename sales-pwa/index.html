@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#0f172a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <link rel="manifest" href="manifest.json?v=4.0">
+  <link rel="manifest" href="manifest.json?v=5.0">
   <link rel="icon" href="icon.svg">
-  <link rel="stylesheet" href="style.css?v=4.0">
+  <link rel="stylesheet" href="style.css?v=5.0.1">
   <title>Sales Log</title>
 </head>
 <body>
@@ -30,7 +30,7 @@
   <div class="app" id="mainApp" hidden>
     <header>
       <div>
-        <h1>Sales Log</h1>
+        <h1>Sales Log <small class="version-mark">v4.0</small></h1>
         <p id="today"></p>
       </div>
       <div class="header-actions">
@@ -111,29 +111,47 @@
 
       <section id="admin" class="tab">
         <div class="card">
-          <h2>Admin dashboard</h2>
-          <p class="muted">Administrative controls. Driver accounts do not see this tab.</p>
+          <div class="split">
+            <div>
+              <h2>Driver management</h2>
+              <p class="muted" id="adminDriverLabel">Select the driver you want to manage.</p>
+            </div>
+            <label class="driver-picker">Driver
+              <select id="adminDriverSelect"><option>Loading drivers…</option></select>
+            </label>
+          </div>
           <div class="stats-grid">
             <div class="metric"><span>Revenue</span><strong id="adminRevenue">€0.00</strong></div>
             <div class="metric"><span>Driver owed</span><strong id="adminDriverOwed">€0.00</strong></div>
-            <div class="metric"><span>Supplements</span><strong id="adminSupplements">€0.00</strong></div>
+            <div class="metric"><span>Approved extras</span><strong id="adminSupplements">€0.00</strong></div>
+            <div class="metric"><span>Pending extras</span><strong id="adminPendingSupplements">€0.00</strong></div>
             <div class="metric"><span>Sales</span><strong id="adminSalesCount">0</strong></div>
           </div>
         </div>
+
         <div class="card">
-          <h2>Driver stock management</h2>
-          <p class="muted">Set the physical quantity currently assigned to the driver. Use the reason field so adjustments have an audit note.</p>
+          <h2>Driver stock</h2>
+          <p class="muted">Every driver has separate stock. Changing this only changes the selected driver's inventory.</p>
           <div id="adminStock"></div>
-          <label>Stock adjustment reason<input id="stockReason" placeholder="e.g. Restocked driver with 20 Ketnet"></label>
-          <button id="adminSaveStock" class="primary wide">Save driver stock</button>
+          <label>Stock adjustment reason <span class="required">required</span>
+            <input id="stockReason" placeholder="e.g. Gave driver 20 Ketnet">
+          </label>
+          <button id="adminSaveStock" class="primary wide">Save this driver's stock</button>
         </div>
+
+        <div class="card">
+          <h2>Extra pay requests</h2>
+          <p class="muted">A driver's supplement is not added to money owed until you approve it.</p>
+          <div id="adminSupplementRequests"></div>
+        </div>
+
         <div class="card">
           <h2>Administration</h2>
           <div class="admin-actions">
-            <button id="adminExportCsv" class="ghost">Export sales CSV</button>
-            <button id="adminExportJson" class="ghost">Export full backup</button>
+            <button id="adminExportCsv" class="ghost">Export selected driver's CSV</button>
+            <button id="adminExportJson" class="ghost">Export selected driver's backup</button>
           </div>
-          <p class="tiny muted">Admin can review revenue, driver commission, supplements, stock on hand and export records. Sales remain append-only in this version to protect the audit trail.</p>
+          <p class="tiny muted">Sales remain append-only. Admin can manage each driver's stock and approve or decline extra-pay requests.</p>
         </div>
       </section>
     </main>
@@ -141,7 +159,7 @@
 
   <div id="toast"></div>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="config.js?v=4.0"></script>
-  <script src="app.js?v=4.0"></script>
+  <script src="config.js?v=5.0.1"></script>
+  <script src="app.js?v=5.0.1"></script>
 </body>
 </html>

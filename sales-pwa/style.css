@@ -26,3 +26,15 @@
 .admin-stock-row input{margin:0}
 .admin-actions{display:flex;gap:10px;flex-wrap:wrap}
 @media(max-width:600px){.admin-stock-row{grid-template-columns:1fr 110px}}
+
+.version-mark{font-size:.7rem;color:#667085;font-weight:800;vertical-align:middle}
+
+.driver-picker{min-width:260px;margin:0}.driver-picker select{margin-top:6px}
+.approval-row{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:14px 0;border-bottom:1px solid #e7ebf0}
+.approval-row small{display:block;color:#667085;margin-top:4px}
+.approval-actions{display:flex;gap:8px;flex-shrink:0}
+.approve-btn,.decline-btn{border:0;border-radius:12px;padding:10px 14px;font-weight:800;cursor:pointer}
+.approve-btn{background:#dcfce7;color:#166534}.decline-btn{background:#fee2e2;color:#991b1b}
+.status-pill{display:inline-block;margin-left:8px;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:800;text-transform:capitalize}
+.status-pill.pending{background:#fef3c7;color:#92400e}.status-pill.approved{background:#dcfce7;color:#166534}.status-pill.declined{background:#fee2e2;color:#991b1b}
+@media(max-width:650px){.approval-row{align-items:flex-start;flex-direction:column}.driver-picker{min-width:100%;width:100%}}
