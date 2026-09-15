@@ -12,3 +12,5 @@
 .customer-toggle input{width:20px;height:20px;margin-top:2px}
 .customer-toggle span{display:flex;flex-direction:column;gap:2px}
 .customer-toggle small{color:#667085}
+
+.inventory-note{margin:-8px 0 16px;color:#667085;font-size:.95rem}

@@ -1,4 +1,4 @@
-const LOCAL_KEY = 'saleslog_v3_5';
+const LOCAL_KEY = 'saleslog_v3_6';
 const defaultProducts = [
   {
     id: 1, name: 'Large product', price: 50, productType: 'fractional_large',
@@ -387,30 +387,16 @@ function renderSettings(){
   $('#settingsProducts').innerHTML=state.products.map((p,idx)=>{
     if(p.productType==='fractional_large'){
       return `<div class="setting-product special-setting" data-i="${idx}"><div class="setting-title"><b>Product 1 · Fractional large product</b><span class="stock-pill">${qtyFmt(p.stock)} stock</span></div>
-        <div class="setting-grid"><label>Name<input data-k="name" value="${attr(p.name)}"></label><label>Current stock (whole products)<input data-k="stock" type="number" min="0" step=".1" value="${p.stock}"></label></div>
-        <div class="setting-grid"><label>Standard amount sold<input data-k="standardAmount" type="number" min="0.01" step=".1" value="${p.standardAmount}"></label><label>Standard price<input data-k="price" type="number" min="0" step=".01" value="${p.price}"></label><label>Full-product price<input data-k="fullPrice" type="number" min="0" step=".01" value="${p.fullPrice}"></label></div>
+        <div class="deal-summary"><span>Driver stock on hand: <b>${qtyFmt(p.stock)}</b></span><span>0.7 = ${money(p.price)} · full = ${money(p.fullPrice)}</span></div>
         <div class="deal-summary"><b>Built-in deal buttons</b><span>3 + 1 = ${money(p.price*3)} · stock ${qtyFmt(p.standardAmount*4)}</span><span>2 + 1 = ${money(p.price*2)} · stock ${qtyFmt(p.standardAmount*3)}</span><span>Free = ${qtyFmt(p.standardAmount)} stock · €0 driver commission</span><span>Misc = manual price / stock / paid portions</span></div>
       </div>`;
     }
-    return `<div class="setting-product" data-i="${idx}"><div class="setting-title"><b>${esc(p.name)}</b><span class="stock-pill">${qtyFmt(p.stock)} stock</span></div><div class="setting-grid"><label>Name<input data-k="name" value="${attr(p.name)}"></label><label>Unit price<input data-k="price" type="number" min="0" step=".01" value="${p.price}"></label><label>Current stock<input data-k="stock" type="number" min="0" step="1" value="${p.stock}"></label></div><div class="deal-summary"><span>${idx===1||idx===2?`Commission: regular €10 / own €15 per €50 sold`:idx===3?`Commission: regular €12.50 / own €15 per €50 sold`:`Commission: regular €10 / own €15 per unit`}</span><span>Misc sales use the same commission rule automatically.</span></div></div>`;
+    return `<div class="setting-product" data-i="${idx}"><div class="setting-title"><b>${esc(p.name)}</b><span class="stock-pill">${qtyFmt(p.stock)} stock</span></div><div class="deal-summary"><span>Driver stock on hand: <b>${qtyFmt(p.stock)}</b></span><span>Unit price: ${money(p.price)}</span></div><div class="deal-summary"><span>${idx===1||idx===2?`Commission: regular €10 / own €15 per €50 sold`:idx===3?`Commission: regular €12.50 / own €15 per €50 sold`:`Commission: regular €10 / own €15 per unit`}</span><span>Misc sales use the same commission rule automatically.</span></div></div>`;
   }).join('');
 }
 
 async function saveSettings(){
-  document.querySelectorAll('.setting-product').forEach(box=>{
-    const p=state.products[+box.dataset.i];
-    box.querySelectorAll('[data-k]').forEach(inp=>{
-      const k=inp.dataset.k;
-      p[k]=['price','stock','standardAmount','fullPrice','dealQty','dealPrice','freeQty'].includes(k)?Number(inp.value):inp.value;
-    });
-  });
-  saveLocal(); renderAll();
-  if(cloudMode){
-    const rows=productRowsForCloud();
-    const {error}=await supabaseClient.from('products').upsert(rows,{onConflict:'user_id,slot'});
-    if(error) return toast('Saved locally — cloud sync failed');
-  }
-  toast('Settings saved');
+  toast('Product setup is locked for the driver');
 }
 
 function exportCsv(){
@@ -420,18 +406,13 @@ function exportCsv(){
 function download(name,text,type){ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([text],{type})); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),500); }
 
 function mapCloudProduct(p,idx){
+  const catalog=defaultProducts[idx];
+  // Product identity and selling price come from the fixed catalog.
+  // Only the stock quantity is carried over from Supabase because that is
+  // the physical inventory currently in the driver's possession.
   return normalizeProduct({
-    id:idx+1,
-    name:p.name,
-    price:Number(p.price),
-    productType:p.product_type || (idx===0?'fractional_large':'standard'),
-    stock:Number(p.stock ?? (idx===0?50:0)),
-    standardAmount:Number(p.standard_amount ?? (idx===0?0.7:1)),
-    fullPrice:Number(p.full_price ?? (idx===0?60:0)),
-    dealType:p.deal_type,
-    dealQty:Number(p.deal_qty),
-    dealPrice:Number(p.deal_price),
-    freeQty:Number(p.free_qty)
+    ...catalog,
+    stock:Number(p?.stock ?? catalog.stock)
   },idx);
 }
 
@@ -473,7 +454,13 @@ async function loadCloud({queueIfBusy=true}={}){
       if(products?.length){
         const bySlot=new Map(products.map(p=>[Number(p.slot),p]));
         state.products=defaultProducts.map((d,idx)=>bySlot.has(idx+1)?mapCloudProduct(bySlot.get(idx+1),idx):normalizeProduct(d,idx));
-        if(products.length<5) await pushProducts();
+        const catalogStale = state.products.some((p,idx)=>{
+          const d=defaultProducts[idx];
+          const cloud=bySlot.get(idx+1);
+          return !cloud || cloud.name!==d.name || Number(cloud.price)!==Number(d.price) ||
+            (cloud.product_type||'standard')!==d.productType;
+        });
+        if(products.length<5 || catalogStale) await pushProducts();
       } else {
         state.products=defaultProducts.map((p,i)=>normalizeProduct(p,i));
         await pushProducts();

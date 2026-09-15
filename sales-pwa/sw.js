@@ -1,4 +1,4 @@
-const CACHE='sales-log-v3.5';
+const CACHE='sales-log-v3.6';
 const APP_SHELL=['./','index.html','style.css','app.js','config.js','manifest.json','icon.svg'];
 
 self.addEventListener('install',event=>{
