@@ -293,3 +293,118 @@ exception when duplicate_object then null; end $$;
 do $$ begin
   alter publication supabase_realtime add table public.sales;
 exception when duplicate_object then null; end $$;
+
+
+-- =========================================================
+-- V5.1 CASH COLLECTION / DRIVER PAYOUT SETTLEMENTS
+-- =========================================================
+
+create table if not exists public.driver_payouts (
+  id uuid primary key default gen_random_uuid(),
+  driver_id uuid not null references auth.users(id) on delete cascade,
+  admin_id uuid not null references auth.users(id),
+  created_at timestamptz not null default now(),
+  sale_count integer not null default 0,
+  cash_collected numeric(12,2) not null default 0,
+  driver_payout numeric(12,2) not null default 0,
+  net_collected numeric(12,2) not null default 0
+);
+
+alter table public.driver_payouts enable row level security;
+revoke all on public.driver_payouts from anon, authenticated;
+
+alter table public.sales add column if not exists payout_id uuid references public.driver_payouts(id);
+alter table public.sales add column if not exists payout_at timestamptz;
+
+create or replace function public.admin_get_driver_payouts(p_driver_id uuid)
+returns setof public.driver_payouts
+language sql
+stable
+security definer
+set search_path=public
+as $$
+  select *
+  from public.driver_payouts
+  where public.is_sales_admin() and driver_id=p_driver_id
+  order by created_at desc;
+$$;
+grant execute on function public.admin_get_driver_payouts(uuid) to authenticated;
+
+create or replace function public.admin_settle_driver(p_driver_id uuid)
+returns uuid
+language plpgsql
+security definer
+set search_path=public
+as $$
+declare
+  v_payout_id uuid := gen_random_uuid();
+  v_cash numeric(12,2) := 0;
+  v_driver numeric(12,2) := 0;
+  v_count integer := 0;
+  s record;
+  item jsonb;
+  v_item_comm numeric(12,2);
+  v_mode text;
+  v_product text;
+  v_rev numeric;
+  v_units numeric;
+begin
+  if not public.is_sales_admin() then raise exception 'Admin access required'; end if;
+
+  if exists(
+    select 1 from public.sales
+    where user_id=p_driver_id and payout_id is null
+      and supplement_amount>0 and supplement_status='pending'
+  ) then
+    raise exception 'Review pending extra-pay requests before settlement';
+  end if;
+
+  for s in
+    select * from public.sales
+    where user_id=p_driver_id and payout_id is null
+    order by sold_at
+    for update
+  loop
+    v_cash := v_cash + coalesce(s.total,0);
+    v_count := v_count + 1;
+
+    for item in select value from jsonb_array_elements(s.items)
+    loop
+      v_mode := coalesce(item->>'commissionMode','regular');
+      v_product := coalesce(item->>'productName','');
+      v_rev := coalesce((item->>'revenue')::numeric,0);
+      v_units := coalesce((item->>'units')::numeric,0);
+
+      if v_product='Large product' then
+        v_item_comm := coalesce((item->>'paidUnits')::numeric,0) *
+          case when v_mode='own' then 15 else 10 end;
+      elsif v_product in ('Ketnet','3Motion') then
+        v_item_comm := v_rev/50 * case when v_mode='own' then 15 else 10 end;
+      elsif v_product='NEP' then
+        v_item_comm := v_rev/50 * case when v_mode='own' then 15 else 12.5 end;
+      elsif v_product='Median' then
+        v_item_comm := v_units * case when v_mode='own' then 15 else 10 end;
+      else
+        v_item_comm := 0;
+      end if;
+      v_driver := v_driver + v_item_comm;
+    end loop;
+
+    if s.supplement_status='approved' then
+      v_driver := v_driver + coalesce(s.supplement_amount,0);
+    end if;
+  end loop;
+
+  if v_count=0 then raise exception 'No unsettled deliveries'; end if;
+
+  insert into public.driver_payouts(id,driver_id,admin_id,sale_count,cash_collected,driver_payout,net_collected)
+  values(v_payout_id,p_driver_id,auth.uid(),v_count,v_cash,v_driver,v_cash-v_driver);
+
+  update public.sales
+  set payout_id=v_payout_id,payout_at=now()
+  where user_id=p_driver_id and payout_id is null;
+
+  return v_payout_id;
+end;
+$$;
+grant execute on function public.admin_settle_driver(uuid) to authenticated;

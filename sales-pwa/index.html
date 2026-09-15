@@ -6,9 +6,9 @@
   <meta name="theme-color" content="#0f172a">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <link rel="manifest" href="manifest.json?v=5.0">
+  <link rel="manifest" href="manifest.json?v=5.1">
   <link rel="icon" href="icon.svg">
-  <link rel="stylesheet" href="style.css?v=5.0.1">
+  <link rel="stylesheet" href="style.css?v=5.1.1">
   <title>Sales Log</title>
 </head>
 <body>
@@ -139,6 +139,25 @@
           <button id="adminSaveStock" class="primary wide">Save this driver's stock</button>
         </div>
 
+        <div class="card payout-card">
+          <div class="split">
+            <div>
+              <h2>Cash collection & payout</h2>
+              <p class="muted">The driver keeps delivery cash until you settle. At settlement, the app calculates the cash held, the driver's share, and what you physically collect.</p>
+            </div>
+          </div>
+          <div class="stats-grid">
+            <div class="metric"><span>Cash driver holds</span><strong id="adminCashHeld">€0.00</strong></div>
+            <div class="metric"><span>Driver share</span><strong id="adminCommissionDue">€0.00</strong></div>
+            <div class="metric"><span>You collect</span><strong id="adminCollectNet">€0.00</strong></div>
+            <div class="metric"><span>Unsettled deliveries</span><strong id="adminUnsettledSales">0</strong></div>
+          </div>
+          <button id="adminSettleDriver" class="primary wide settlement-btn">Collect cash & settle driver</button>
+          <p class="tiny muted">Pending extra-pay requests must be approved or declined before settlement, so the payout cannot accidentally exclude them.</p>
+          <h3>Previous collections</h3>
+          <div id="adminPayoutHistory"></div>
+        </div>
+
         <div class="card">
           <h2>Extra pay requests</h2>
           <p class="muted">A driver's supplement is not added to money owed until you approve it.</p>
@@ -159,7 +178,7 @@
 
   <div id="toast"></div>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="config.js?v=5.0.1"></script>
-  <script src="app.js?v=5.0.1"></script>
+  <script src="config.js?v=5.1.1"></script>
+  <script src="app.js?v=5.1.1"></script>
 </body>
 </html>

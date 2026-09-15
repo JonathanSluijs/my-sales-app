@@ -1,4 +1,4 @@
-const LOCAL_KEY = 'saleslog_v5_0';
+const LOCAL_KEY = 'saleslog_v5_1';
 const defaultProducts = [
   {
     id: 1, name: 'Large product', price: 50, productType: 'fractional_large',
@@ -458,6 +458,7 @@ function renderHistory(){
       <div class="commission-line">Driver earned ${money(totalOwed)} · ${sale.customerSource==='driver_own'?'Driver own customer':'Regular customer'}</div>
       ${requested>0?`<div class="history-meta"><b>Extra pay request:</b> ${money(requested)} · ${esc(supplementReason(sale))} · <b>${statusText}</b></div>`:''}
       ${sale.note?`<div class="history-meta">${esc(sale.note)}</div>`:''}
+      ${sale.payoutId?`<div class="history-meta"><b>Settlement:</b> cash collected / commission settled ${sale.payoutAt?`· ${new Date(sale.payoutAt).toLocaleString()}`:''}</div>`:''}
     </div>`;
   }).join('') : `<p class="muted">No sales yet.</p>`;
 }
@@ -605,7 +606,9 @@ async function loadCloud({queueIfBusy=true}={}){
         supplementAmount:Number(s.supplement_amount ?? ((Array.isArray(s.items) && s.items[0]?.supplementAmount)||0)),
         supplementNote:s.supplement_note ?? ((Array.isArray(s.items) && s.items[0]?.supplementNote)||''),
         supplementStatus:s.supplement_status || (Number(s.supplement_amount||0)>0?'pending':'none'),
-        supplementReviewedAt:s.supplement_reviewed_at || null
+        supplementReviewedAt:s.supplement_reviewed_at || null,
+        payoutId:s.payout_id || null,
+        payoutAt:s.payout_at || null
       }));
 
       saveLocal();
@@ -756,12 +759,20 @@ function renderAdmin(){
   const owed=state.sales.reduce((a,x)=>a+saleCommission(x),0);
   const approved=state.sales.reduce((a,x)=>a+saleSupplement(x),0);
   const pending=state.sales.filter(x=>supplementStatus(x)==='pending').reduce((a,x)=>a+requestedSupplement(x),0);
+  const unsettled=state.sales.filter(x=>!x.payoutId);
+  const cashHeld=unsettled.reduce((a,x)=>a+Number(x.total||0),0);
+  const commissionDue=unsettled.reduce((a,x)=>a+baseSaleCommission(x)+saleSupplement(x),0);
+  const collectNet=cashHeld-commissionDue;
 
   if($('#adminRevenue')) $('#adminRevenue').textContent=money(revenue);
   if($('#adminDriverOwed')) $('#adminDriverOwed').textContent=money(owed);
   if($('#adminSupplements')) $('#adminSupplements').textContent=money(approved);
   if($('#adminPendingSupplements')) $('#adminPendingSupplements').textContent=money(pending);
   if($('#adminSalesCount')) $('#adminSalesCount').textContent=state.sales.length;
+  if($('#adminCashHeld')) $('#adminCashHeld').textContent=money(cashHeld);
+  if($('#adminCommissionDue')) $('#adminCommissionDue').textContent=money(commissionDue);
+  if($('#adminCollectNet')) $('#adminCollectNet').textContent=money(collectNet);
+  if($('#adminUnsettledSales')) $('#adminUnsettledSales').textContent=unsettled.length;
 
   $('#adminStock').innerHTML = selectedDriverId ? state.products.map((p,index)=>`
     <div class="admin-stock-row">
@@ -789,6 +800,47 @@ function renderAdmin(){
       </div>`;
     }).join('') : '<p class="muted">No extra-pay requests for this driver.</p>';
   }
+  loadPayoutHistory();
+}
+
+
+async function loadPayoutHistory(){
+  if(!isAdmin() || !selectedDriverId || !$('#adminPayoutHistory')) return;
+  const {data,error}=await supabaseClient.rpc('admin_get_driver_payouts',{p_driver_id:selectedDriverId});
+  if(error){
+    console.error(error);
+    $('#adminPayoutHistory').innerHTML='<p class="muted">Could not load settlement history.</p>';
+    return;
+  }
+  $('#adminPayoutHistory').innerHTML=(data||[]).length ? data.map(p=>`
+    <div class="payout-history-row">
+      <div><b>${new Date(p.created_at).toLocaleString()}</b><small>${Number(p.sale_count)} deliveries</small></div>
+      <div><span>Cash ${money(p.cash_collected)}</span><span>Driver share ${money(p.driver_payout)}</span><strong>Collected ${money(p.net_collected)}</strong></div>
+    </div>`).join('') : '<p class="muted">No previous collections for this driver.</p>';
+}
+
+async function settleDriver(){
+  if(!isAdmin() || !selectedDriverId) return toast('Select a driver first');
+  const unsettled=state.sales.filter(x=>!x.payoutId);
+  if(!unsettled.length) return toast('There are no unsettled deliveries');
+
+  const pending=unsettled.filter(x=>supplementStatus(x)==='pending' && requestedSupplement(x)>0);
+  if(pending.length){
+    return toast(`Review ${pending.length} pending extra-pay request${pending.length===1?'':'s'} first`);
+  }
+
+  const cash=unsettled.reduce((a,x)=>a+Number(x.total||0),0);
+  const driverShare=unsettled.reduce((a,x)=>a+baseSaleCommission(x)+saleSupplement(x),0);
+  const net=cash-driverShare;
+
+  if(!confirm(`Settle this driver now?\n\nCash currently held: ${money(cash)}\nDriver share: ${money(driverShare)}\nYou collect: ${money(net)}\n\nThis will mark ${unsettled.length} deliveries as settled.`)) return;
+
+  const {data,error}=await supabaseClient.rpc('admin_settle_driver',{p_driver_id:selectedDriverId});
+  if(error){ console.error(error); return toast('Settlement failed: '+(error.message||'')); }
+
+  await loadCloud({queueIfBusy:false});
+  await loadPayoutHistory();
+  toast(`Settlement recorded · collect ${money(net)}`);
 }
 
 async function reviewSupplement(saleId,status){
@@ -841,6 +893,7 @@ function wireUi(){
   $('#saveSettings').onclick=saveSettings;
   $('#exportCsv').onclick=exportCsv;
   if($('#adminSaveStock')) $('#adminSaveStock').onclick=adminSaveStock;
+  if($('#adminSettleDriver')) $('#adminSettleDriver').onclick=settleDriver;
   if($('#adminDriverSelect')) $('#adminDriverSelect').onchange=e=>selectAdminDriver(e.target.value);
   if($('#adminExportCsv')) $('#adminExportCsv').onclick=exportCsv;
   if($('#adminExportJson')) $('#adminExportJson').onclick=()=>download('sales-backup.json',JSON.stringify(state,null,2),'application/json');

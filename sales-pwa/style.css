@@ -38,3 +38,9 @@
 .status-pill{display:inline-block;margin-left:8px;padding:3px 8px;border-radius:999px;font-size:12px;font-weight:800;text-transform:capitalize}
 .status-pill.pending{background:#fef3c7;color:#92400e}.status-pill.approved{background:#dcfce7;color:#166534}.status-pill.declined{background:#fee2e2;color:#991b1b}
 @media(max-width:650px){.approval-row{align-items:flex-start;flex-direction:column}.driver-picker{min-width:100%;width:100%}}
+
+.payout-card .settlement-btn{margin-top:16px}
+.payout-history-row{display:flex;justify-content:space-between;gap:18px;padding:13px 0;border-bottom:1px solid #e7ebf0}
+.payout-history-row small{display:block;color:#667085;margin-top:3px}
+.payout-history-row>div:last-child{display:flex;gap:14px;align-items:center;flex-wrap:wrap;text-align:right}
+@media(max-width:650px){.payout-history-row{flex-direction:column}.payout-history-row>div:last-child{text-align:left}}
