@@ -582,6 +582,175 @@ function initSupabase(){
   }
 }
 
+function isAdmin(){
+  if(!cloudMode || !session?.user?.email) return false;
+
+  const cfg = window.SALES_APP_CONFIG || {};
+  const adminEmails = Array.isArray(cfg.adminEmails)
+    ? cfg.adminEmails.map(e => String(e).trim().toLowerCase())
+    : [];
+
+  return adminEmails.includes(
+    String(session.user.email).trim().toLowerCase()
+  );
+}
+
+function applyRoleUI(){
+  const admin = isAdmin();
+
+  const badge = $('#roleBadge');
+  const adminNav = $('#adminNav');
+
+  if(badge){
+    badge.textContent = admin ? 'Admin' : 'Driver';
+    badge.className = 'role-badge ' + (admin ? 'admin-role' : 'driver-role');
+  }
+
+  if(adminNav){
+    adminNav.hidden = !admin;
+  }
+
+  // Driver settings remain read-only.
+  // Admin uses the dedicated Admin tab for stock management.
+  if($('#saveSettings')){
+    $('#saveSettings').hidden = true;
+  }
+
+  // Safety: if a non-admin somehow has the Admin tab open,
+  // immediately move them back to New Sale.
+  const adminTab = $('#admin');
+
+  if(!admin && adminTab?.classList.contains('active')){
+    document.querySelectorAll('nav button,.tab')
+      .forEach(x => x.classList.remove('active'));
+
+    document.querySelector('[data-tab="sale"]')?.classList.add('active');
+    $('#sale')?.classList.add('active');
+  }
+}
+
+function renderAdmin(){
+  if(!isAdmin()) return;
+
+  const revenue = state.sales.reduce(
+    (sum, sale) => sum + Number(sale.total || 0),
+    0
+  );
+
+  const commissions = state.sales.reduce(
+    (sum, sale) => sum + saleCommission(sale),
+    0
+  );
+
+  const supplements = state.sales.reduce(
+    (sum, sale) => sum + Number(sale.supplementAmount || 0),
+    0
+  );
+
+  if($('#adminRevenue')){
+    $('#adminRevenue').textContent = money(revenue);
+  }
+
+  if($('#adminDriverOwed')){
+    $('#adminDriverOwed').textContent = money(commissions + supplements);
+  }
+
+  if($('#adminSupplements')){
+    $('#adminSupplements').textContent = money(supplements);
+  }
+
+  if($('#adminSalesCount')){
+    $('#adminSalesCount').textContent = state.sales.length;
+  }
+
+  if($('#adminStock')){
+    $('#adminStock').innerHTML = state.products.map((p, index) => `
+      <div class="admin-stock-row">
+        <div>
+          <b>${esc(p.name)}</b>
+          <small class="muted">
+            Current driver stock: ${qtyFmt(p.stock)}
+          </small>
+        </div>
+
+        <label>
+          New stock
+          <input
+            class="admin-stock-input"
+            data-index="${index}"
+            type="number"
+            min="0"
+            step="${p.productType === 'fractional_large' ? '0.1' : '1'}"
+            value="${Number(p.stock || 0)}"
+          >
+        </label>
+      </div>
+    `).join('');
+  }
+}
+
+async function adminSaveStock(){
+  if(!isAdmin()){
+    return toast('Admin access required');
+  }
+
+  const reason = $('#stockReason')?.value.trim();
+
+  if(!reason){
+    return toast('Enter a reason for the stock adjustment');
+  }
+
+  const inputs = document.querySelectorAll('.admin-stock-input');
+
+  const newProducts = state.products.map(p => ({...p}));
+  let changed = false;
+
+  for(const input of inputs){
+    const index = Number(input.dataset.index);
+    const value = Number(input.value);
+
+    if(!Number.isFinite(value) || value < 0){
+      return toast('Enter valid stock quantities');
+    }
+
+    if(
+      newProducts[index].productType !== 'fractional_large' &&
+      !Number.isInteger(value)
+    ){
+      return toast(`${newProducts[index].name} stock must be a whole number`);
+    }
+
+    const cleaned = cleanFloat(value);
+
+    if(cleaned !== Number(newProducts[index].stock)){
+      changed = true;
+      newProducts[index].stock = cleaned;
+    }
+  }
+
+  if(!changed){
+    return toast('No stock changes detected');
+  }
+
+  state.products = newProducts;
+  saveLocal();
+
+  try{
+    if(cloudMode){
+      await pushProducts();
+      await loadCloud();
+    }else{
+      renderAll();
+    }
+
+    $('#stockReason').value = '';
+
+    toast('Driver stock updated');
+  }catch(error){
+    console.error('Stock update failed:', error);
+    toast('Stock update failed');
+  }
+}
 function renderAll(){ applyRoleUI(); renderProducts(); renderHistory(); renderStats(); renderSettings(); renderAdmin(); }
 
 function wireUi(){
